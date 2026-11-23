@@ -470,7 +470,7 @@ async function marcar(esCanje) {
     const t = $('.tarjeta', $('[data-tarjeta-panel]'));
     if (t) t.classList.add('temblor');
     anunciar(cfg.premio + ' canjeado para ' + n.nombre + '. La tarjeta vuelve a cero.');
-    aviso('Canjeado · la tarjeta de ' + primerNombre(n.nombre) + ' parte de nuevo', true);
+    aviso('Canjeado · la tarjeta de ' + primerNombre(n.nombre) + ' parte de nuevo', false);
   } else {
     const btn = completa(n) ? $('[data-canjear]') : $('[data-mas-sello]');
     btn.classList.remove('ok'); void btn.offsetWidth; btn.classList.add('ok');
@@ -478,7 +478,7 @@ async function marcar(esCanje) {
     anunciar(completa(n)
       ? 'Visita marcada a ' + n.nombre + '. Tarjeta completa: ' + total + ' de ' + total + '. La próxima vez canjea su ' + minuscula(cfg.premio) + '.'
       : 'Visita marcada a ' + n.nombre + ': ' + n.sellos + ' de ' + total + '.');
-    aviso(completa(n) ? 'Tarjeta completa · ' + n.nombre : 'Visita marcada · ' + n.sellos + ' de ' + total, true);
+    aviso(completa(n) ? 'Tarjeta completa · ' + n.nombre : 'Visita marcada · ' + n.sellos + ' de ' + total, false);
   }
 }
 
@@ -609,7 +609,7 @@ async function registrar(ev) {
     $('[data-seleccionado]').scrollIntoView({ block: 'start', behavior: suave() });
     $('[data-enviar-tarjeta]').focus({ preventScroll: true });
     anunciar('Listo: ' + nombre + ' quedó registrado con su primera visita. Ahora mándale su tarjeta por WhatsApp.');
-    aviso('Registrado · ' + codigo(cliente(c.id)) + ' · mándale su tarjeta', !!r);
+    aviso('Registrado · ' + codigo(cliente(c.id)) + ' · mándale su tarjeta', false);
   } finally {
     registrando = false;
   }
