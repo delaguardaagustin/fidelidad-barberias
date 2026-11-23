@@ -1,852 +1,952 @@
-/* Tarjeta de fidelidad para barberías · demo de SENTRY-CODE
-   Sitio estático: todo se guarda en localStorage de este navegador.
-   Script clásico (no módulo), sin dependencias salvo qrcodejs por CDN. */
-(function () {
-  'use strict';
+/* Tarjeta de fidelidad para barberías · SENTRY-CODE
+   Pantallas (inicio, tarjeta del cliente y panel de la barbería). No sabe dónde se guardan los datos:
+   todo pasa por el objeto de datos.js (modo demo en este navegador, o modo real en Supabase).
+   Módulo ES sin dependencias salvo qrcodejs (CDN) y html5-qrcode (se carga solo al abrir la cámara). */
+import { crearDatos } from './datos.js';
 
-  var ALMACEN_LOCAL = 'fidelidad-barberias:v1';
-  var DIA = 86400000;
-  var HTML5QR_URL = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+const DIA = 86400000;
+const HTML5QR_URL = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+const CLAVE_VISTO = 'fidelidad-barberias:visto';        // sellos que el cliente ya vio animarse (por tarjeta)
+const CLAVE_ACTUAL = 'fidelidad-barberias:actual';      // tarjeta elegida en la vista «Cliente» de la demo
+const CLAVE_MI_TARJETA = 'fidelidad-barberias:mi-tarjeta'; // última tarjeta abierta con su enlace (para la app instalada)
+const RECIENTE = 7;                                      // días en que un recordatorio cuenta como «ya le escribiste»
 
-  var CONFIG_BASE = {
-    nombre: 'Barbería Demo',
-    color: '#c08f55',
-    whatsapp: '00000000',   // 8 dígitos después de +56 9 (número falso de demo)
-    sellos: 8,
-    dias: 15,
-    premio: 'Corte gratis'
-  };
+// ---------- Utilidades ----------
+const $ = (sel, raiz) => (raiz || document).querySelector(sel);
+const $$ = (sel, raiz) => Array.from((raiz || document).querySelectorAll(sel));
+function inicioDia(ts) { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+const hoy0 = () => inicioDia(Date.now());
+const diasEntre = (a, b) => Math.round((inicioDia(b) - inicioDia(a)) / DIA);
+const soloDigitos = (s) => String(s || '').replace(/\D+/g, '');
+const sinTildes = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const primerNombre = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+const minuscula = (s) => { s = String(s || '').trim(); return s.charAt(0).toLowerCase() + s.slice(1); };
+const mayuscula = (s) => String(s || '').replace(/^./, (x) => x.toUpperCase());
+function escapar(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+const plural = (n, uno, varios) => n + ' ' + (n === 1 ? uno : varios);
+const telCompleto = (ocho) => '+569' + soloDigitos(ocho);
+function formatoTel(t) {
+  const d = soloDigitos(t);
+  if (d.length === 11 && d.indexOf('569') === 0) return '+56 9 ' + d.slice(3, 7) + ' ' + d.slice(7);
+  return t || '';
+}
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const DIAS_SEMANA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const fechaLarga = (ts) => { const d = new Date(ts); return DIAS_SEMANA[d.getDay()] + ' ' + d.getDate() + ' de ' + MESES[d.getMonth()]; };
+const hace = (n) => (n === 0 ? 'hoy' : n === 1 ? 'ayer' : 'hace ' + n + ' días');
+function leerLocal(k, defecto) { try { const v = window.localStorage.getItem(k); return v ? JSON.parse(v) : defecto; } catch (e) { return defecto; } }
+function guardarLocal(k, v) { try { window.localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* modo privado */ } }
+const preferirQuieto = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const suave = () => (preferirQuieto() ? 'auto' : 'smooth');
 
-  // ---------- Utilidades ----------
-  function $(sel, raiz) { return (raiz || document).querySelector(sel); }
-  function $$(sel, raiz) { return Array.prototype.slice.call((raiz || document).querySelectorAll(sel)); }
-  function copia(o) { return JSON.parse(JSON.stringify(o)); }
-  function inicioDia(ts) { var d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
-  function hoy0() { return inicioDia(Date.now()); }
-  function haceDias(n) { return hoy0() - n * DIA + 11 * 3600000; } // 11:00 de ese día
-  function diasEntre(a, b) { return Math.round((inicioDia(b) - inicioDia(a)) / DIA); }
-  function soloDigitos(s) { return String(s || '').replace(/\D+/g, ''); }
-  function sinTildes(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
-  function primerNombre(n) { return String(n || '').trim().split(/\s+/)[0] || ''; }
-  function minuscula(s) { s = String(s || '').trim(); return s.charAt(0).toLowerCase() + s.slice(1); }
-  function escapar(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-  function plural(n, uno, varios) { return n + ' ' + (n === 1 ? uno : varios); }
-  function telCompleto(ocho) { return '+569' + soloDigitos(ocho); }
-  function formatoTel(t) {
-    var d = soloDigitos(t);
-    if (d.length === 11 && d.indexOf('569') === 0) return '+56 9 ' + d.slice(3, 7) + ' ' + d.slice(7);
-    return t;
-  }
-  var MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
-  var DIAS_SEMANA = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-  function fechaLarga(ts) { var d = new Date(ts); return DIAS_SEMANA[d.getDay()] + ' ' + d.getDate() + ' de ' + MESES[d.getMonth()]; }
-  function fechaCorta(ts) { var d = new Date(ts); return d.getDate() + ' de ' + MESES[d.getMonth()]; }
-  function hace(n) {
-    if (n === 0) return 'hoy';
-    if (n === 1) return 'ayer';
-    return 'hace ' + n + ' días';
-  }
+// ---------- Estado de la pantalla ----------
+let datos = null;
+let real = false;
+let cfg = null;              // ajustes en uso: los del panel o los de la tarjeta abierta
+let clientes = [];           // clientes del panel (en la demo, también los de la vista «Cliente»)
+let puedeAjustar = true;
+let tarjetaAbierta = null;   // { clave, cliente } de la vista del cliente
 
-  // ---------- Datos de ejemplo ----------
-  // Teléfonos claramente falsos: +56 9 0000 0001 … 0012
-  function datosEjemplo() {
-    var base = [
-      ['Matías Soto',        [3, 18, 33, 48],      7, 0],
-      ['Benjamín Rojas',     [22, 41, 58],         3, 0],
-      ['Vicente Muñoz',      [8, 24, 39, 55],      8, 0],
-      ['Joaquín Díaz',       [27, 50],             2, 0],
-      ['Tomás González',     [5, 19, 34],          5, 0],
-      ['Cristóbal Pérez',    [35],                 1, 0],
-      ['Diego Contreras',    [12, 26, 44, 59],     4, 0],
-      ['Sebastián Silva',    [17, 31, 46],         6, 0],
-      ['Felipe Morales',     [1, 14, 29, 43, 57],  2, 1],
-      ['Martín Araya',       [44],                 1, 0],
-      ['Ignacio Fuentes',    [10, 25],             2, 0],
-      ['Camilo Espinoza',    [20, 36, 52],         5, 1]
-    ];
-    var clientes = base.map(function (f, i) {
-      var n = i + 1;
-      var visitas = f[1].map(haceDias).sort(function (a, b) { return a - b; });
-      return {
-        id: 'c' + n,
-        numero: n,
-        nombre: f[0],
-        telefono: '+5690000' + String(n).padStart(4, '0'),
-        sellos: f[2],
-        canjes: f[3],
-        visitas: visitas,
-        visto: f[2],
-        recordado: null,
-        creado: visitas[0] || Date.now()
-      };
-    });
-    return { version: 1, config: copia(CONFIG_BASE), clientes: clientes, siguiente: clientes.length + 1, actual: 'c1' };
-  }
+const cliente = (id) => clientes.find((c) => c.id === id) || null;
+function reemplazar(c) { const i = clientes.findIndex((x) => x.id === c.id); if (i >= 0) clientes[i] = c; else clientes.push(c); }
+const ultimaVisita = (c) => (c.visitas && c.visitas.length ? c.visitas[c.visitas.length - 1] : null);
+const diasSinVenir = (c) => { const u = ultimaVisita(c); return u == null ? null : diasEntre(u, Date.now()); };
+function prefijoCodigo() {
+  const p = String(cfg.nombre || '').replace(/[^\p{L}\s]/gu, ' ').trim().split(/\s+/).slice(0, 2).map((w) => w.charAt(0)).join('');
+  return (sinTildes(p).toUpperCase() || 'BC').slice(0, 2);
+}
+const codigo = (c) => prefijoCodigo() + '-' + String(c.numero).padStart(4, '0');
+const faltan = (c) => Math.max(0, cfg.sellos - c.sellos);
+const completa = (c) => c.sellos >= cfg.sellos;
+const recordadoHace = (c) => (c.recordado == null ? null : diasEntre(c.recordado, Date.now()));
+const recordadoReciente = (c) => { const d = recordadoHace(c); return d != null && d < RECIENTE; };
 
-  // ---------- Estado y guardado ----------
-  var estado;
-  function valido(e) {
-    return e && e.version === 1 && e.config && Array.isArray(e.clientes) && typeof e.siguiente === 'number';
-  }
-  function cargar() {
-    try {
-      var crudo = window.localStorage.getItem(ALMACEN_LOCAL);
-      if (crudo) {
-        var e = JSON.parse(crudo);
-        if (valido(e)) {
-          e.config = Object.assign(copia(CONFIG_BASE), e.config);
-          return e;
-        }
-      }
-    } catch (err) { /* sin almacenamiento: se usa la demo en memoria */ }
-    return datosEjemplo();
-  }
-  function guardar() {
-    try { window.localStorage.setItem(ALMACEN_LOCAL, JSON.stringify(estado)); } catch (err) { /* modo privado o bloqueado */ }
-  }
+// Cada cuántos días suele venir: promedio entre sus últimas visitas; si hay pocas, el de los ajustes
+function intervalo(c) {
+  const v = c.visitas || [];
+  if (v.length < 2) return cfg.dias;
+  const desde = Math.max(0, v.length - 5); let suma = 0, n = 0;
+  for (let i = desde + 1; i < v.length; i++) { suma += diasEntre(v[i - 1], v[i]); n++; }
+  return Math.min(Math.max(Math.round(suma / n), 7), 45);
+}
+function proximoCorte(c) {
+  const u = ultimaVisita(c), cada = intervalo(c);
+  if (u == null) return { dias: 0, fecha: hoy0(), cada };
+  const fecha = inicioDia(u) + cada * DIA;
+  return { dias: diasEntre(Date.now(), fecha), fecha, cada };
+}
 
-  function cliente(id) {
-    for (var i = 0; i < estado.clientes.length; i++) if (estado.clientes[i].id === id) return estado.clientes[i];
-    return null;
-  }
-  function ultimaVisita(c) { return c.visitas.length ? c.visitas[c.visitas.length - 1] : null; }
-  function diasSinVenir(c) { var u = ultimaVisita(c); return u == null ? null : diasEntre(u, Date.now()); }
-  function codigo(c) { return 'BD-' + String(c.numero).padStart(4, '0'); }
-  function faltan(c) { return Math.max(0, estado.config.sellos - c.sellos); }
-  function completa(c) { return c.sellos >= estado.config.sellos; }
+// ---------- Tema (color principal con contraste AA) ----------
+function hexRgb(h) {
+  h = String(h).replace('#', '');
+  if (h.length === 3) h = h.split('').map((x) => x + x).join('');
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+const rgbHex = (r) => '#' + r.map((x) => Math.round(x).toString(16).padStart(2, '0')).join('');
+function luminancia(rgb) {
+  const c = rgb.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function contraste(a, b) { const la = luminancia(a), lb = luminancia(b); return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05); }
+const mezclar = (a, b, t) => [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * t);
+function aplicarTema() {
+  const marca = hexRgb(cfg.color);
+  const carbon = hexRgb('#14120f'), crema = hexRgb('#efe6d3'), tarjeta = hexRgb('#1a1712');
+  const sobre = contraste(marca, carbon) >= contraste(marca, crema) ? '#14120f' : '#efe6d3';
+  let texto = marca, t = 0;
+  while (contraste(texto, tarjeta) < 4.6 && t < 1) { t += 0.05; texto = mezclar(marca, crema, t); }
+  const raiz = document.documentElement.style;
+  raiz.setProperty('--marca', cfg.color);
+  raiz.setProperty('--sobre-marca', sobre);
+  raiz.setProperty('--marca-texto', rgbHex(texto));
+}
 
-  // Intervalo habitual del cliente: promedio entre sus visitas; si hay pocas, el de los ajustes
-  function intervalo(c) {
-    var v = c.visitas;
-    if (v.length < 2) return estado.config.dias;
-    var desde = Math.max(0, v.length - 5), suma = 0, n = 0;
-    for (var i = desde + 1; i < v.length; i++) { suma += diasEntre(v[i - 1], v[i]); n++; }
-    var prom = Math.round(suma / n);
-    return Math.min(Math.max(prom, 7), 45);
-  }
-  function proximoCorte(c) {
-    var u = ultimaVisita(c);
-    var cada = intervalo(c);
-    if (u == null) return { dias: 0, fecha: hoy0(), cada: cada };
-    var fecha = inicioDia(u) + cada * DIA;
-    return { dias: diasEntre(Date.now(), fecha), fecha: fecha, cada: cada };
-  }
+// ---------- Anuncios (aria-live) y aviso flotante ----------
+let temporizadorAviso = null;
+function anunciar(txt) {
+  const el = $('[data-anuncio]');
+  el.textContent = '';
+  window.setTimeout(() => { el.textContent = txt; }, 30);
+}
+function aviso(txt, conDeshacer) {
+  const caja = $('[data-aviso]');
+  $('[data-aviso-texto]').textContent = txt;
+  $('[data-aviso-accion]').hidden = !conDeshacer;
+  caja.hidden = false;
+  window.clearTimeout(temporizadorAviso);
+  temporizadorAviso = window.setTimeout(() => { caja.hidden = true; }, conDeshacer ? 8000 : 3500);
+}
+/* Ejecuta un cambio en los datos; si falla, lo dice en simple y devuelve null. */
+async function intentar(fn) {
+  try { return await fn(); }
+  catch (e) { const m = (e && e.message) || 'No se pudo hacer. Inténtalo de nuevo.'; aviso(m, false); anunciar(m); return null; }
+}
 
-  // ---------- Tema (color principal con contraste AA) ----------
-  function hexRgb(h) {
-    h = String(h).replace('#', '');
-    if (h.length === 3) h = h.split('').map(function (x) { return x + x; }).join('');
-    var n = parseInt(h, 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+// ---------- Tarjeta (se dibuja igual en cliente, panel y portada) ----------
+const giroSello = (i) => ((i * 37) % 23) - 11; // giro «a mano», estable por posición
+function htmlTarjeta(c, opciones) {
+  opciones = opciones || {};
+  const total = cfg.sellos, nuevos = opciones.nuevos || [];
+  const cols = Math.ceil((total + 1) / 2);
+  let sellos = '';
+  for (let i = 0; i < total; i++) {
+    const lleno = i < c.sellos, nuevo = nuevos.indexOf(i) >= 0;
+    const retraso = nuevo ? (nuevos.indexOf(i) * 0.18) + 's' : '0s';
+    sellos += '<li class="sello' + (lleno ? ' lleno' : '') + (nuevo ? ' nuevo' : '') +
+      '" style="--giro:' + giroSello(i) + 'deg;--retraso:' + retraso + '">' +
+      (lleno ? '<svg aria-hidden="true"><use href="#tijera"/></svg>' : '<span aria-hidden="true">' + (i + 1) + '</span>') + '</li>';
   }
-  function rgbHex(r) { return '#' + r.map(function (x) { return Math.round(x).toString(16).padStart(2, '0'); }).join(''); }
-  function luminancia(rgb) {
-    var c = rgb.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
-    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-  }
-  function contraste(a, b) {
-    var la = luminancia(a), lb = luminancia(b);
-    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
-  }
-  function mezclar(a, b, t) { return [0, 1, 2].map(function (i) { return a[i] + (b[i] - a[i]) * t; }); }
-  function aplicarTema() {
-    var marca = hexRgb(estado.config.color);
-    var carbon = hexRgb('#14120f'), crema = hexRgb('#efe6d3'), tarjeta = hexRgb('#1a1712');
-    var sobre = contraste(marca, carbon) >= contraste(marca, crema) ? '#14120f' : '#efe6d3';
-    var texto = marca, t = 0;
-    while (contraste(texto, tarjeta) < 4.6 && t < 1) { t += 0.05; texto = mezclar(marca, crema, t); }
-    var raiz = document.documentElement.style;
-    raiz.setProperty('--marca', estado.config.color);
-    raiz.setProperty('--sobre-marca', sobre);
-    raiz.setProperty('--marca-texto', rgbHex(texto));
-  }
+  sellos += '<li class="sello premio' + (completa(c) ? ' listo' : '') + '"><span aria-hidden="true">' + escapar(premioCorto()) + '</span></li>';
+  const etiqueta = c.nombre + ': ' + Math.min(c.sellos, total) + ' de ' + total + ' sellos' +
+    (completa(c) ? '. Tarjeta completa, ' + minuscula(cfg.premio) + ' listo para canjear.' : '. Faltan ' + faltan(c) + ' para ' + minuscula(cfg.premio) + '.');
+  return '<article class="tarjeta" aria-label="' + escapar(etiqueta) + '">' +
+    '<span class="tarjeta__poste" aria-hidden="true"></span>' +
+    '<div class="tarjeta__cabeza"><div><p class="tarjeta__barberia">' + escapar(cfg.nombre) + '</p>' +
+    '<p class="tarjeta__tipo">Tarjeta de cliente</p></div>' +
+    '<p class="tarjeta__numero">Nº ' + String(c.numero).padStart(4, '0') + '</p></div>' +
+    '<p class="tarjeta__titular">A nombre de<strong>' + escapar(c.nombre) + '</strong></p>' +
+    '<ol class="sellos" style="--cols:' + cols + '" aria-hidden="true">' + sellos + '</ol>' +
+    '<div class="tarjeta__pie"><span><strong>' + Math.min(c.sellos, total) + '/' + total + '</strong> sellos</span>' +
+    '<span class="tarjeta__regla">' + escapar(regla()) + '</span></div></article>';
+}
+function regla() {
+  if (/^corte\s+gratis$/i.test(cfg.premio.trim())) return cfg.sellos + ' cortes y el siguiente es gratis';
+  return 'Cada ' + cfg.sellos + ' cortes: ' + minuscula(cfg.premio);
+}
+function premioCorto() { const p = cfg.premio.trim(); return p.length > 14 ? 'Premio' : p; }
 
-  // ---------- Anuncios (aria-live) y aviso flotante ----------
-  var temporizadorAviso = null;
-  function anunciar(txt) {
-    var el = $('[data-anuncio]');
-    el.textContent = '';
-    window.setTimeout(function () { el.textContent = txt; }, 30);
-  }
-  function aviso(txt, conDeshacer) {
-    var caja = $('[data-aviso]');
-    $('[data-aviso-texto]').textContent = txt;
-    $('[data-aviso-accion]').hidden = !conDeshacer;
-    caja.hidden = false;
-    window.clearTimeout(temporizadorAviso);
-    temporizadorAviso = window.setTimeout(function () { caja.hidden = true; }, conDeshacer ? 8000 : 3500);
-  }
+// ---------- Enlaces ----------
+const enlaceWa = (numero, texto) => 'https://wa.me/' + soloDigitos(numero) + '?text=' + encodeURIComponent(texto);
+const urlTarjeta = (c) => location.href.split('#')[0] + '#tarjeta/' + c.token;
+function textoReserva(c) {
+  return 'Hola ' + cfg.nombre + ', soy ' + c.nombre + '. Quiero reservar hora para un corte. ' +
+    'Llevo ' + Math.min(c.sellos, cfg.sellos) + ' de ' + cfg.sellos + ' sellos en mi tarjeta.';
+}
+function textoRecordatorio(c) {
+  const k = faltan(c), d = diasSinVenir(c);
+  const cola = k === 0 ? 'Ya tienes tu ' + minuscula(cfg.premio) + ' listo para canjear.'
+    : 'Te ' + (k === 1 ? 'falta 1 sello' : 'faltan ' + k + ' sellos') + ' para tu ' + minuscula(cfg.premio) + '.';
+  return 'Hola ' + primerNombre(c.nombre) + ', ya pasaron ' + d + ' días desde tu último corte en ' + cfg.nombre +
+    '. ¿Te reservo hora esta semana? ' + cola + ' Tu tarjeta: ' + urlTarjeta(c);
+}
+function textoEnviarTarjeta(c) {
+  return 'Hola ' + primerNombre(c.nombre) + ', esta es tu tarjeta de sellos de ' + cfg.nombre + ': ' + urlTarjeta(c) +
+    ' . Ábrela cuando quieras, no tienes que instalar nada. Muéstrala al pagar y te marcamos la visita.';
+}
 
-  // ---------- Tarjeta (se dibuja igual en cliente, panel y portada) ----------
-  function giroSello(i) { return ((i * 37) % 23) - 11; } // giro "a mano", estable por posición
-  function htmlTarjeta(c, opciones) {
-    opciones = opciones || {};
-    var cfg = estado.config;
-    var total = cfg.sellos;
-    var nuevos = opciones.nuevos || [];
-    var cols = Math.ceil((total + 1) / 2);
-    var sellos = '';
-    for (var i = 0; i < total; i++) {
-      var lleno = i < c.sellos;
-      var nuevo = nuevos.indexOf(i) >= 0;
-      var retraso = nuevo ? (nuevos.indexOf(i) * 0.18) + 's' : '0s';
-      sellos += '<li class="sello' + (lleno ? ' lleno' : '') + (nuevo ? ' nuevo' : '') +
-        '" style="--giro:' + giroSello(i) + 'deg;--retraso:' + retraso + '">' +
-        (lleno ? '<svg aria-hidden="true"><use href="#tijera"/></svg>' : '<span aria-hidden="true">' + (i + 1) + '</span>') +
-        '</li>';
-    }
-    sellos += '<li class="sello premio' + (completa(c) ? ' listo' : '') + '"><span aria-hidden="true">' + escapar(premioCorto()) + '</span></li>';
-    var etiqueta = c.nombre + ': ' + Math.min(c.sellos, total) + ' de ' + total + ' sellos' +
-      (completa(c) ? '. Tarjeta completa, ' + minuscula(cfg.premio) + ' listo para canjear.' : '. Faltan ' + faltan(c) + ' para ' + minuscula(cfg.premio) + '.');
-    return '<article class="tarjeta" aria-label="' + escapar(etiqueta) + '">' +
-      '<span class="tarjeta__poste" aria-hidden="true"></span>' +
-      '<div class="tarjeta__cabeza"><div><p class="tarjeta__barberia">' + escapar(cfg.nombre) + '</p>' +
-      '<p class="tarjeta__tipo">Tarjeta de cliente</p></div>' +
-      '<p class="tarjeta__numero">Nº ' + String(c.numero).padStart(4, '0') + '</p></div>' +
-      '<p class="tarjeta__titular">A nombre de<strong>' + escapar(c.nombre) + '</strong></p>' +
-      '<ol class="sellos" style="--cols:' + cols + '" aria-hidden="true">' + sellos + '</ol>' +
-      '<div class="tarjeta__pie"><span><strong>' + Math.min(c.sellos, total) + '/' + total + '</strong> sellos</span>' +
-      '<span class="tarjeta__regla">' + escapar(regla()) + '</span></div>' +
-      '</article>';
-  }
-  function regla() {
-    var cfg = estado.config;
-    if (/^corte\s+gratis$/i.test(cfg.premio.trim())) return cfg.sellos + ' cortes y el siguiente es gratis';
-    return 'Cada ' + cfg.sellos + ' cortes: ' + minuscula(cfg.premio);
-  }
-  function premioCorto() {
-    var p = estado.config.premio.trim();
-    return p.length > 14 ? 'Premio' : p;
-  }
+// ---------- Rutas ----------
+// #inicio · #cliente[/id] (demo) · #tarjeta/<enlace secreto> (cliente) · #barberia (panel)
+const VISTAS = ['inicio', 'cliente', 'tarjeta', 'barberia'];
+let vistaActual = null;
+function leerRuta() {
+  const partes = (location.hash || '').replace(/^#/, '').split('/');
+  if (VISTAS.indexOf(partes[0]) < 0) return null;
+  return { vista: partes[0], id: partes.slice(1).join('/') || null };
+}
+/* En el modo real no hay portada ni selector de clientes: el cliente entra por su enlace y el personal al panel. */
+function rutaPermitida(r) {
+  if (!real) return r || { vista: 'inicio' };
+  if (r && (r.vista === 'barberia' || (r.vista === 'tarjeta' && r.id))) return r;
+  const mia = leerLocal(CLAVE_MI_TARJETA, null);
+  return mia ? { vista: 'tarjeta', id: mia } : { vista: 'barberia' };
+}
+async function irA(ruta, enfocar) {
+  ruta = rutaPermitida(ruta);
+  vistaActual = ruta.vista;
+  const seccion = ruta.vista === 'tarjeta' ? 'cliente' : ruta.vista;
+  $$('[data-vista]').forEach((s) => { s.hidden = s.getAttribute('data-vista') !== seccion; });
+  $$('[data-nav]').forEach((a) => {
+    if (a.getAttribute('data-nav') === seccion) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+  document.body.setAttribute('data-pantalla', ruta.vista);
+  if (ruta.vista !== 'barberia') cerrarLector();
+  $('[data-aviso]').hidden = true;   // un aviso de otra pantalla no debe quedar encima
+  if (ruta.vista === 'inicio') renderInicio();
+  if (ruta.vista === 'cliente') { if (ruta.id && cliente(ruta.id)) guardarLocal(CLAVE_ACTUAL, ruta.id); await abrirClienteDemo(); }
+  if (ruta.vista === 'tarjeta') await abrirTarjeta(ruta.id);
+  if (ruta.vista === 'barberia') await abrirPanel();
+  ponerTitulo();
+  if (enfocar) { window.scrollTo(0, 0); $('#contenido').focus({ preventScroll: true }); }
+}
+function ponerTitulo() {
+  const titulos = { inicio: 'Tarjeta de fidelidad', cliente: 'Mi tarjeta', tarjeta: 'Mi tarjeta', barberia: 'Panel' };
+  document.title = (titulos[vistaActual] || 'Tarjeta de fidelidad') + ' · ' + (cfg ? cfg.nombre : 'Barbería');
+}
 
-  // ---------- Enlaces de WhatsApp ----------
-  function enlaceWa(numero, texto) { return 'https://wa.me/' + soloDigitos(numero) + '?text=' + encodeURIComponent(texto); }
-  function textoReserva(c) {
-    var cfg = estado.config;
-    return 'Hola ' + cfg.nombre + ', soy ' + c.nombre + '. Quiero reservar hora para un corte. ' +
-      'Llevo ' + Math.min(c.sellos, cfg.sellos) + ' de ' + cfg.sellos + ' sellos en mi tarjeta.';
+// ---------- Render general ----------
+function renderNombres() { $$('[data-nombre-barberia]').forEach((el) => { el.textContent = cfg.nombre; }); }
+function enRiesgo() {
+  return clientes.filter((c) => { const d = diasSinVenir(c); return d != null && d > cfg.dias; })
+    .sort((a, b) => diasSinVenir(b) - diasSinVenir(a));
+}
+/* A quién conviene escribirle hoy: le toca volver, aceptó mensajes y no le escribiste esta semana. */
+const porEscribir = () => enRiesgo().filter((c) => c.acepta && !recordadoReciente(c));
+
+function renderInicio() {
+  const c = cliente('c1') || clientes[0];
+  $('[data-tarjeta-portada]').innerHTML = c ? htmlTarjeta(c) : '';
+  $('[data-total-volver]').textContent = plural(porEscribir().length, 'cliente', 'clientes');
+}
+
+// ---------- Vista del cliente ----------
+async function abrirClienteDemo() {
+  const sel = $('[data-selector-cliente]');
+  sel.innerHTML = clientes.map((c) => '<option value="' + escapar(c.id) + '">' + escapar(c.nombre) + ' · ' + formatoTel(c.telefono) + '</option>').join('');
+  const c = cliente(leerLocal(CLAVE_ACTUAL, 'c1')) || clientes[0];
+  if (!c) return;
+  sel.value = c.id;
+  tarjetaAbierta = { clave: c.id, cliente: c };
+  pintarCliente(c);
+}
+async function abrirTarjeta(clave) {
+  const error = $('[data-tarjeta-error]'), grid = $('[data-cliente-grid]');
+  const t = await intentar(() => datos.tarjeta(clave));
+  if (!t) {
+    error.hidden = false; grid.hidden = true; tarjetaAbierta = null;
+    if (real && leerLocal(CLAVE_MI_TARJETA, null) === clave) guardarLocal(CLAVE_MI_TARJETA, null);
+    return;
   }
-  function textoRecordatorio(c) {
-    var cfg = estado.config, k = faltan(c), d = diasSinVenir(c);
-    var cola = k === 0
-      ? 'Ya tienes tu ' + minuscula(cfg.premio) + ' listo para canjear.'
-      : 'Te ' + (k === 1 ? 'falta 1 sello' : 'faltan ' + k + ' sellos') + ' para tu ' + minuscula(cfg.premio) + '.';
-    return 'Hola ' + primerNombre(c.nombre) + ', ya pasaron ' + d + ' días desde tu último corte en ' + cfg.nombre +
-      '. ¿Te reservo hora esta semana? ' + cola;
+  error.hidden = true; grid.hidden = false;
+  if (real) { cfg = t.config; aplicarTema(); renderNombres(); guardarLocal(CLAVE_MI_TARJETA, clave); }
+  else reemplazar(Object.assign({}, cliente(t.cliente.id) || {}, t.cliente));
+  tarjetaAbierta = { clave, cliente: t.cliente };
+  pintarCliente(t.cliente);
+}
+
+function pintarCliente(c, forzarNuevos) {
+  $('[data-cliente-grid]').hidden = false;
+  // Animar los sellos que el cliente todavía no había visto
+  const vistos = leerLocal(CLAVE_VISTO, {});
+  const visto = typeof vistos[c.token] === 'number' ? Math.min(vistos[c.token], c.sellos) : c.sellos;
+  let nuevos = [];
+  if (forzarNuevos) nuevos = forzarNuevos;
+  else for (let i = visto; i < c.sellos; i++) nuevos.push(i);
+  vistos[c.token] = c.sellos; guardarLocal(CLAVE_VISTO, vistos);
+
+  $('[data-tarjeta-cliente]').innerHTML = htmlTarjeta(c, { nuevos });
+  $('[data-estado-tarjeta]').innerHTML = completa(c)
+    ? '<strong>Completaste tu tarjeta.</strong> Muéstrala en la barbería y canjea tu ' + escapar(minuscula(cfg.premio)) + '.'
+    : 'Te ' + (faltan(c) === 1 ? 'falta <strong>1 sello</strong>' : 'faltan <strong>' + faltan(c) + ' sellos</strong>') + ' para tu ' + escapar(minuscula(cfg.premio)) + '.';
+
+  const p = proximoCorte(c);
+  let valor, nota;
+  if (p.dias > 1) { valor = 'en ' + p.dias + ' días'; nota = 'Cerca del ' + fechaLarga(p.fecha) + '. Sueles venir cada ' + p.cada + ' días.'; }
+  else if (p.dias === 1) { valor = 'mañana'; nota = mayuscula(fechaLarga(p.fecha)) + '. Sueles venir cada ' + p.cada + ' días.'; }
+  else if (p.dias === 0) { valor = 'hoy'; nota = 'Ya te toca. Reserva y llega con el pelo a tiempo.'; }
+  else { valor = 'ya te toca'; nota = 'Tu corte estaba recomendado hace ' + plural(-p.dias, 'día', 'días') + '.'; }
+  if (ultimaVisita(c) == null) { valor = 'cuando quieras'; nota = 'Todavía no tienes visitas marcadas.'; }
+  $('[data-proximo-valor]').textContent = valor;
+  $('[data-proximo-nota]').textContent = nota;
+
+  const reservar = $('[data-reservar]');
+  reservar.hidden = !cfg.whatsapp;
+  reservar.href = enlaceWa(telCompleto(cfg.whatsapp), textoReserva(c));
+  $('[data-codigo-cliente]').textContent = codigo(c);
+  $('[data-simular-sello]').textContent = completa(c) ? 'Probar: me canjean el premio' : 'Probar: me marcan un sello';
+  const acepta = $('[data-acepta-avisos]');
+  acepta.checked = !!c.acepta;
+  dibujarQR(c);
+
+  const hist = (c.visitas || []).slice(-5).reverse();
+  $('[data-historial]').innerHTML = hist.length
+    ? hist.map((v) => '<li><span>' + mayuscula(fechaLarga(v)) + '</span><span>' + hace(diasEntre(v, Date.now())) + '</span></li>').join('')
+    : '<li><span>Aún no hay visitas.</span><span></span></li>';
+}
+
+function dibujarQR(c) {
+  const caja = $('[data-qr]');
+  caja.innerHTML = '';
+  caja.setAttribute('aria-label', 'Código QR de la tarjeta de ' + c.nombre + ', código ' + codigo(c));
+  if (typeof window.QRCode !== 'function') {
+    caja.innerHTML = '<div class="qr__alterno">' + escapar(codigo(c)) + '<br>(QR no disponible sin conexión)</div>';
+    return;
   }
-
-  // ---------- Router ----------
-  var VISTAS = ['inicio', 'cliente', 'barberia'];
-  var vistaActual = null;
-  function leerRuta() {
-    var h = (location.hash || '').replace(/^#/, '');
-    var partes = h.split('/');
-    if (VISTAS.indexOf(partes[0]) < 0) return null;
-    return { vista: partes[0], id: partes[1] || null };
+  try {
+    new window.QRCode(caja, { text: urlTarjeta(c), width: 240, height: 240, colorDark: '#14120f', colorLight: '#efe6d3', correctLevel: window.QRCode.CorrectLevel.M });
+    const img = caja.querySelector('img');
+    if (img) img.alt = '';
+    caja.removeAttribute('title');
+  } catch (err) {
+    caja.innerHTML = '<div class="qr__alterno">' + escapar(codigo(c)) + '</div>';
   }
-  function irA(ruta, enfocar) {
-    if (!ruta) ruta = { vista: vistaActual || 'inicio' };
-    if (ruta.vista === 'cliente' && ruta.id && cliente(ruta.id)) { estado.actual = ruta.id; guardar(); }
-    vistaActual = ruta.vista;
-    $$('[data-vista]').forEach(function (s) { s.hidden = s.getAttribute('data-vista') !== ruta.vista; });
-    $$('[data-nav]').forEach(function (a) {
-      if (a.getAttribute('data-nav') === ruta.vista) a.setAttribute('aria-current', 'page');
-      else a.removeAttribute('aria-current');
-    });
-    var titulos = { inicio: 'Tarjeta de fidelidad', cliente: 'Mi tarjeta', barberia: 'Panel' };
-    document.title = titulos[ruta.vista] + ' · ' + estado.config.nombre;
-    if (ruta.vista === 'inicio') renderInicio();
-    if (ruta.vista === 'cliente') renderCliente();
-    if (ruta.vista === 'barberia') renderPanel();
-    if (ruta.vista !== 'barberia') cerrarLector();
-    if (enfocar) {
-      window.scrollTo(0, 0);
-      var main = $('#contenido');
-      main.focus({ preventScroll: true });
-    }
+}
+
+// ---------- Panel de la barbería ----------
+let seleccionadoId = null;
+let ultimaAccion = null;     // { id, accion, texto } para «Deshacer»
+let bloqueo = { id: null, hasta: 0 };   // evita marcar dos veces al mismo cliente con un doble toque
+let registrando = false;
+let buscarPorNombre = false;
+let panelCargado = false;
+
+async function abrirPanel() {
+  if (real) {
+    const s = await intentar(() => datos.sesion());
+    if (!s) { mostrarLogin(true); return; }
   }
-
-  // ---------- Render general ----------
-  function renderNombres() {
-    $$('[data-nombre-barberia]').forEach(function (el) { el.textContent = estado.config.nombre; });
+  if (!panelCargado || real) {
+    const p = await intentar(() => datos.panel());
+    if (!p) return;
+    cfg = p.config; clientes = p.clientes; puedeAjustar = p.puedeAjustar !== false;
+    if (!panelCargado) datos.alCambiar(recargarPanel);
+    panelCargado = true;
   }
-  function enRiesgo() {
-    return estado.clientes.filter(function (c) { var d = diasSinVenir(c); return d != null && d > estado.config.dias; })
-      .sort(function (a, b) { return diasSinVenir(b) - diasSinVenir(a); });
+  aplicarTema(); renderNombres(); renderPanel();
+  mostrarLogin(false);   // el panel se muestra recién con sus datos cargados
+}
+async function recargarPanel() {
+  const p = await intentar(() => datos.panel());
+  if (!p) return;
+  cfg = p.config; clientes = p.clientes;
+  aplicarTema(); renderNombres();
+  if (vistaActual === 'barberia') { renderResultados(); renderSeleccionado(); renderVolver(); renderNumeros(); }
+  if (vistaActual === 'inicio') renderInicio();
+  if (vistaActual === 'cliente') abrirClienteDemo();
+}
+function mostrarLogin(si) {
+  $('[data-login]').hidden = !si;
+  $('[data-panel]').hidden = si;
+  if (si) window.setTimeout(() => { const c = $('#login-correo'); if (c) c.focus(); }, 0);
+}
+
+function renderPanel() {
+  renderResultados();
+  renderSeleccionado();
+  renderVolver();
+  renderNumeros();
+  llenarAjustes();
+  $('[data-bloque-ajustes]').hidden = !puedeAjustar;
+  $('[data-saltar-a="bloque-ajustes"]').hidden = !puedeAjustar;
+  $('[data-salir]').hidden = !real;
+  $('[data-restablecer]').hidden = real;
+}
+
+/* Busca por los últimos dígitos del celular (lo normal), por nombre o por el código de la tarjeta. */
+function buscar(q) {
+  const texto = sinTildes(q).trim(), digitos = soloDigitos(q);
+  if (!texto) return clientes.filter((c) => ultimaVisita(c) != null).sort((a, b) => ultimaVisita(b) - ultimaVisita(a)).slice(0, 5);
+  const cod = /^[a-z]{1,3}-?\d+$/i.test(q.trim()) ? parseInt(digitos, 10) : null;
+  if (cod != null) return clientes.filter((c) => c.numero === cod);
+  if (/^[\d\s+-]+$/.test(q.trim())) {
+    if (digitos.length <= 4) return clientes.filter((c) => soloDigitos(c.telefono).endsWith(digitos)).slice(0, 8);
+    return clientes.filter((c) => soloDigitos(c.telefono).indexOf(digitos) >= 0 || ('569' + digitos).indexOf(soloDigitos(c.telefono)) >= 0).slice(0, 8);
   }
+  if (texto.length < 2) return [];
+  return clientes.filter((c) => sinTildes(c.nombre).indexOf(texto) >= 0).slice(0, 8);
+}
 
-  function renderInicio() {
-    var c = cliente('c1') || estado.clientes[0];
-    $('[data-tarjeta-portada]').innerHTML = c ? htmlTarjeta(c) : '';
-    var n = enRiesgo().filter(function (x) { return !recordadoHoy(x); }).length;
-    $('[data-total-volver]').textContent = plural(n, 'cliente', 'clientes');
+function renderResultados() {
+  const q = $('[data-buscar]').value;
+  const lista = buscar(q), hay = q.trim().length > 0;
+  const rotulo = $('[data-rotulo-resultados]'), ul = $('[data-resultados]');
+  // Con un cliente elegido, la lista se esconde para que el botón grande quede a la vista.
+  const esconder = !!seleccionadoId;
+  rotulo.hidden = esconder; ul.hidden = esconder;
+  rotulo.textContent = hay ? (lista.length ? 'Resultados' : 'Sin resultados') : 'Atendidos hace poco';
+  if (lista.length) {
+    ul.innerHTML = lista.map((c) => '<li><button type="button" class="resultado" data-elegir="' + escapar(c.id) + '" aria-pressed="' + (c.id === seleccionadoId) + '">' +
+      '<span class="resultado__nombre">' + escapar(c.nombre) + '</span>' +
+      '<span class="resultado__tel">' + formatoTel(c.telefono) + ' · ' + codigo(c) + '</span>' +
+      '<span class="resultado__sellos">' + Math.min(c.sellos, cfg.sellos) + '/' + cfg.sellos + '</span></button></li>').join('');
+  } else if (hay) {
+    const corto = soloDigitos(q).length > 0 && soloDigitos(q).length < 4 && /^[\d\s+-]+$/.test(q.trim());
+    ul.innerHTML = '<li class="resultados__vacio"><p>' + (corto ? 'Escribe los 4 últimos dígitos del celular.' : 'No hay nadie con ese dato.') + '</p>' +
+      (corto ? '' : '<button type="button" class="btn btn--marca btn--ancho" data-nuevo-desde-busqueda>Registrar cliente nuevo</button>') + '</li>';
+  } else {
+    ul.innerHTML = '<li class="resultados__vacio"><p>Todavía no hay visitas marcadas.</p></li>';
   }
+}
 
-  // ---------- Vista cliente ----------
-  function renderCliente(forzarNuevos) {
-    var sel = $('[data-selector-cliente]');
-    sel.innerHTML = estado.clientes.map(function (c) {
-      return '<option value="' + c.id + '">' + escapar(c.nombre) + ' · ' + formatoTel(c.telefono) + '</option>';
-    }).join('');
-    var c = cliente(estado.actual) || estado.clientes[0];
-    if (!c) return;
-    estado.actual = c.id;
-    sel.value = c.id;
+function elegir(id, avisar) {
+  const c = cliente(id);
+  if (!c) return;
+  seleccionadoId = id;
+  if (ultimaAccion && ultimaAccion.id !== id) ultimaAccion = null;
+  cerrarNuevo(false);
+  renderResultados();
+  renderSeleccionado();
+  if (avisar) anunciar('Cliente: ' + c.nombre + ', ' + Math.min(c.sellos, cfg.sellos) + ' de ' + cfg.sellos + ' sellos. ' + (completa(c) ? 'Tiene el premio listo.' : 'Toca Marcar visita.'));
+}
+/* Enfoca el botón principal: cierra el teclado del celular y deja el botón a la vista. */
+function enfocarAccion() {
+  const c = cliente(seleccionadoId);
+  if (!c) return;
+  const b = completa(c) ? $('[data-canjear]') : $('[data-mas-sello]');
+  b.focus({ preventScroll: true });
+  const caja = $('[data-seleccionado]');
+  const r = caja.getBoundingClientRect();
+  if (r.top < 88 || r.top > window.innerHeight * 0.5) caja.scrollIntoView({ block: 'start', behavior: suave() });
+}
 
-    // Animar los sellos que el cliente todavía no había visto
-    var nuevos = [];
-    var visto = typeof c.visto === 'number' ? c.visto : c.sellos;
-    if (forzarNuevos) nuevos = forzarNuevos;
-    else if (c.sellos > visto) for (var i = visto; i < c.sellos; i++) nuevos.push(i);
-    c.visto = c.sellos;
-    guardar();
+function renderSeleccionado(nuevos) {
+  const caja = $('[data-seleccionado]');
+  const c = seleccionadoId ? cliente(seleccionadoId) : null;
+  if (!c) { caja.hidden = true; return; }
+  caja.hidden = false;
+  const d = diasSinVenir(c);
+  $('[data-sel-nombre]').textContent = c.nombre;
+  $('[data-sel-dato]').textContent = Math.min(c.sellos, cfg.sellos) + ' de ' + cfg.sellos + ' sellos · ' +
+    (d == null ? 'sin visitas aún' : 'última visita ' + hace(d)) + ' · ' + codigo(c);
+  const yaVino = d === 0 && !(ultimaAccion && ultimaAccion.id === c.id);
+  const avisoSel = $('[data-sel-aviso]');
+  avisoSel.hidden = !yaVino;
+  avisoSel.textContent = yaVino ? 'Ya tiene una visita marcada hoy. Márcale otra solo si volvió.' : '';
+  $('[data-tarjeta-panel]').innerHTML = htmlTarjeta(c, { nuevos: nuevos || [] });
+  const lleno = completa(c);
+  $('[data-mas-sello]').hidden = lleno;
+  const canje = $('[data-canjear]');
+  canje.hidden = !lleno;
+  canje.textContent = 'Canjear ' + minuscula(cfg.premio);
+  const dz = $('[data-deshacer-caja]');
+  if (ultimaAccion && ultimaAccion.id === c.id) { dz.hidden = false; $('[data-deshacer-texto]').textContent = ultimaAccion.texto; }
+  else dz.hidden = true;
+  const enviar = $('[data-enviar-tarjeta]');
+  enviar.href = enlaceWa(c.telefono, textoEnviarTarjeta(c));
+  $('[data-enviar-nombre]').textContent = primerNombre(c.nombre);
+  const borrar = $('[data-borrar-cliente]');
+  borrar.hidden = !puedeAjustar;
+  borrar.classList.remove('confirmar'); borrar.textContent = 'Borrar sus datos';
+}
 
-    $('[data-tarjeta-cliente]').innerHTML = htmlTarjeta(c, { nuevos: nuevos });
-    var cfg = estado.config;
-    $('[data-estado-tarjeta]').innerHTML = completa(c)
-      ? '<strong>Completaste tu tarjeta.</strong> Muéstrala en la barbería y canjea tu ' + escapar(minuscula(cfg.premio)) + '.'
-      : 'Te ' + (faltan(c) === 1 ? 'falta <strong>1 sello</strong>' : 'faltan <strong>' + faltan(c) + ' sellos</strong>') +
-        ' para tu ' + escapar(minuscula(cfg.premio)) + '.';
-
-    var p = proximoCorte(c);
-    var valor, nota;
-    if (p.dias > 1) { valor = 'en ' + p.dias + ' días'; nota = 'Cerca del ' + fechaLarga(p.fecha) + '. Sueles venir cada ' + p.cada + ' días.'; }
-    else if (p.dias === 1) { valor = 'mañana'; nota = fechaLarga(p.fecha) + '. Sueles venir cada ' + p.cada + ' días.'; }
-    else if (p.dias === 0) { valor = 'hoy'; nota = 'Ya te toca. Reserva y llega con el pelo a tiempo.'; }
-    else { valor = 'ya te toca'; nota = 'Tu corte estaba recomendado hace ' + plural(-p.dias, 'día', 'días') + '.'; }
-    if (ultimaVisita(c) == null) { valor = 'cuando quieras'; nota = 'Todavía no tienes visitas marcadas.'; }
-    $('[data-proximo-valor]').textContent = valor;
-    $('[data-proximo-nota]').textContent = nota;
-
-    $('[data-reservar]').href = enlaceWa(telCompleto(cfg.whatsapp), textoReserva(c));
-    $('[data-codigo-cliente]').textContent = codigo(c);
-    $('[data-simular-sello]').textContent = completa(c) ? 'Probar: la barbería me canjea el premio' : 'Probar: la barbería me marca un sello';
-    dibujarQR(c);
-
-    var hist = c.visitas.slice(-5).reverse();
-    $('[data-historial]').innerHTML = hist.length
-      ? hist.map(function (v) { return '<li><span>' + fechaLarga(v).replace(/^./, function (x) { return x.toUpperCase(); }) + '</span><span>' + hace(diasEntre(v, Date.now())) + '</span></li>'; }).join('')
-      : '<li><span>Aún no hay visitas.</span><span></span></li>';
+async function marcar(esCanje) {
+  const c = cliente(seleccionadoId);
+  if (!c || completa(c) !== esCanje) return;
+  if (bloqueo.id === c.id && Date.now() < bloqueo.hasta) return;
+  bloqueo = { id: c.id, hasta: Infinity };
+  const r = await intentar(() => (esCanje ? datos.canjear(c.id) : datos.marcarVisita(c.id)));
+  bloqueo = { id: c.id, hasta: r ? Date.now() + 1500 : 0 };
+  if (!r) return;
+  reemplazar(r.cliente);
+  const n = r.cliente, total = cfg.sellos;
+  ultimaAccion = { id: n.id, accion: r.accion, texto: esCanje ? mayuscula(minuscula(cfg.premio)) + ' canjeado.' : 'Visita marcada: ' + n.sellos + ' de ' + total + '.' };
+  $('[data-buscar]').value = '';
+  renderSeleccionado(esCanje ? [] : [n.sellos - 1]);
+  renderResultados(); renderVolver(); renderNumeros();
+  if (esCanje) {
+    $('[data-mas-sello]').focus();
+    const t = $('.tarjeta', $('[data-tarjeta-panel]'));
+    if (t) t.classList.add('temblor');
+    anunciar(cfg.premio + ' canjeado para ' + n.nombre + '. La tarjeta vuelve a cero.');
+    aviso('Canjeado · la tarjeta de ' + primerNombre(n.nombre) + ' parte de nuevo', true);
+  } else {
+    const btn = completa(n) ? $('[data-canjear]') : $('[data-mas-sello]');
+    btn.classList.remove('ok'); void btn.offsetWidth; btn.classList.add('ok');
+    if (completa(n)) btn.focus(); // el botón de visita se oculta: el foco pasa a «Canjear»
+    anunciar(completa(n)
+      ? 'Visita marcada a ' + n.nombre + '. Tarjeta completa: ' + total + ' de ' + total + '. La próxima vez canjea su ' + minuscula(cfg.premio) + '.'
+      : 'Visita marcada a ' + n.nombre + ': ' + n.sellos + ' de ' + total + '.');
+    aviso(completa(n) ? 'Tarjeta completa · ' + n.nombre : 'Visita marcada · ' + n.sellos + ' de ' + total, true);
   }
+}
 
-  function urlTarjeta(c) {
-    var base = location.href.split('#')[0];
-    return base + '#cliente/' + c.id;
-  }
-  function dibujarQR(c) {
-    var caja = $('[data-qr]');
-    caja.innerHTML = '';
-    caja.setAttribute('aria-label', 'Código QR personal de ' + c.nombre + ', código ' + codigo(c));
-    if (typeof window.QRCode !== 'function') {
-      caja.innerHTML = '<div class="qr__alterno">' + escapar(codigo(c)) + '<br>(QR no disponible sin conexión)</div>';
+async function deshacer() {
+  if (!ultimaAccion) return;
+  const a = ultimaAccion;
+  const c = await intentar(() => datos.deshacer(a.accion));
+  if (!c) return;
+  ultimaAccion = null;
+  bloqueo = { id: null, hasta: 0 };
+  reemplazar(c);
+  seleccionadoId = c.id;
+  renderSeleccionado(); renderResultados(); renderVolver(); renderNumeros();
+  $('[data-aviso]').hidden = true;
+  (completa(c) ? $('[data-canjear]') : $('[data-mas-sello]')).focus();
+  anunciar('Listo, se deshizo. ' + c.nombre + ' tiene ' + c.sellos + ' de ' + cfg.sellos + ' sellos.');
+}
+
+// ---------- Les toca volver ----------
+function renderVolver() {
+  const lista = enRiesgo();
+  // Primero a quienes conviene escribirles; al final los que ya recibieron mensaje o no aceptaron.
+  const peso = (c) => (!c.acepta ? 2 : recordadoReciente(c) ? 1 : 0);
+  lista.sort((a, b) => peso(a) - peso(b) || diasSinVenir(b) - diasSinVenir(a));
+  const pendientes = porEscribir().length;
+  $('[data-volver-nota]').textContent = lista.length
+    ? 'Llevan más de ' + cfg.dias + ' días sin venir. Toca WhatsApp y el mensaje se abre listo para enviar.'
+    : '';
+  $('[data-n-volver]').textContent = pendientes ? String(pendientes) : '';
+  $('[data-n-volver-chip]').textContent = pendientes ? ' · ' + pendientes : '';
+  $('[data-volver]').innerHTML = lista.length ? lista.map((c) => {
+    const d = diasSinVenir(c), k = faltan(c), r = recordadoHace(c);
+    const dato = '<strong>' + d + ' días</strong> sin venir · ' + (k === 0 ? 'premio listo' : 'le ' + (k === 1 ? 'falta 1 sello' : 'faltan ' + k));
+    let accion;
+    if (!c.acepta) accion = '<p class="volver__estado">No aceptó mensajes</p>';
+    else accion = '<a class="btn ' + (recordadoReciente(c) ? 'btn--suave' : 'btn--whatsapp') + ' btn--chico volver__boton" data-recordar="' + escapar(c.id) + '" target="_blank" rel="noopener" href="' +
+      escapar(enlaceWa(c.telefono, textoRecordatorio(c))) + '">' +
+      '<svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Z" opacity=".25"/><path fill="currentColor" d="M16.5 14.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>' +
+      (recordadoReciente(c) ? 'Otra vez' : 'WhatsApp') + '<span class="sr"> a ' + escapar(c.nombre) + '</span></a>';
+    return '<li class="' + (peso(c) ? 'volver__fila--hecha' : '') + '">' +
+      '<div class="volver__info"><p class="volver__nombre">' + escapar(c.nombre) + '</p>' +
+      '<p class="volver__dato">' + dato + '</p>' +
+      (c.acepta && r != null && r < RECIENTE ? '<p class="volver__hecho">Le escribiste ' + hace(r) + '.</p>' : '') +
+      '</div>' + accion + '</li>';
+  }).join('') : '<li class="volver__vacio">Nadie lleva más de ' + cfg.dias + ' días sin venir. Buena semana.</li>';
+}
+
+function renderNumeros() {
+  let activos = 0, riesgo = 0, canjes = 0, mes = 0;
+  const ahora = new Date(), m = ahora.getMonth(), a = ahora.getFullYear();
+  clientes.forEach((c) => {
+    const d = diasSinVenir(c);
+    if (d != null && d <= cfg.dias) activos++;
+    if (d != null && d > cfg.dias) riesgo++;
+    canjes += c.canjes || 0;
+    (c.visitas || []).forEach((v) => { const f = new Date(v); if (f.getMonth() === m && f.getFullYear() === a) mes++; });
+  });
+  $('[data-n-activos]').textContent = activos;
+  $('[data-n-riesgo]').textContent = riesgo;
+  $('[data-n-canjes]').textContent = canjes;
+  $('[data-n-mes]').textContent = mes;
+  $('[data-numeros-nota]').textContent = 'Activo: vino en los últimos ' + cfg.dias + ' días. En riesgo: lleva más de ' + cfg.dias + '. Visitas de ' + MESES[m] + ' de ' + a + '.';
+}
+
+// ---------- Cliente nuevo (desde la misma búsqueda) ----------
+function errorCampo(form, nombre, msg) {
+  const input = form.elements[nombre];
+  const p = $('[data-error="' + nombre + '"]', form);
+  if (p) p.textContent = msg || '';
+  if (input) { if (msg) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
+  return !msg;
+}
+const formatoOcho = (d) => (d.length > 4 ? d.slice(0, 4) + ' ' + d.slice(4) : d);
+function abrirNuevo() {
+  const form = $('[data-form-nuevo]'), q = $('[data-buscar]').value.trim();
+  form.reset();
+  errorCampo(form, 'nombre', ''); errorCampo(form, 'telefono', '');
+  // Lo escrito en la búsqueda se aprovecha: un celular completo o un nombre.
+  const d = soloDigitos(q);
+  if (/^[\d\s+-]+$/.test(q) && d.length >= 8) form.elements.telefono.value = formatoOcho(d.slice(-8));
+  else if (/\p{L}/u.test(q)) form.elements.nombre.value = q.replace(/\s+/g, ' ');
+  seleccionadoId = null; renderSeleccionado();
+  form.hidden = false;
+  $('[data-abrir-nuevo]').setAttribute('aria-expanded', 'true');
+  form.scrollIntoView({ block: 'nearest', behavior: suave() });
+  (form.elements.nombre.value ? form.elements.telefono : form.elements.nombre).focus({ preventScroll: true });
+  if (form.elements.nombre.value && form.elements.telefono.value) form.elements.acepta.focus({ preventScroll: true });
+}
+function cerrarNuevo(enfocar) {
+  const form = $('[data-form-nuevo]');
+  if (form.hidden) return;
+  form.hidden = true;
+  $('[data-abrir-nuevo]').setAttribute('aria-expanded', 'false');
+  if (enfocar) $('[data-buscar]').focus();
+}
+async function registrar(ev) {
+  ev.preventDefault();
+  const form = ev.currentTarget;
+  if (registrando) return;
+  const nombre = form.elements.nombre.value.trim().replace(/\s+/g, ' ');
+  const ocho = soloDigitos(form.elements.telefono.value);
+  let ok = true;
+  ok = errorCampo(form, 'nombre', nombre.length < 2 ? 'Escribe el nombre del cliente.' : '') && ok;
+  const tel = telCompleto(ocho);
+  let errTel = '';
+  if (ocho.length !== 8) errTel = 'El celular debe tener 8 dígitos después del +56 9.';
+  else if (clientes.some((c) => soloDigitos(c.telefono) === soloDigitos(tel))) errTel = 'Ese celular ya está registrado. Búscalo arriba.';
+  ok = errorCampo(form, 'telefono', errTel) && ok;
+  if (!ok) { const inv = form.querySelector('[aria-invalid="true"]'); if (inv) inv.focus(); return; }
+  registrando = true;
+  try {
+    let c;
+    try { c = await datos.registrar({ nombre, telefono: tel, acepta: form.elements.acepta.checked }); }
+    catch (e) {
+      if (e.campo) { errorCampo(form, e.campo, e.message); form.elements[e.campo].focus(); }
+      else { aviso(e.message, false); anunciar(e.message); }
       return;
     }
-    try {
-      new window.QRCode(caja, {
-        text: urlTarjeta(c),
-        width: 240,
-        height: 240,
-        colorDark: '#14120f',
-        colorLight: '#efe6d3',
-        correctLevel: window.QRCode.CorrectLevel.M
-      });
-      var img = caja.querySelector('img');
-      if (img) img.alt = '';
-      caja.removeAttribute('title');
-    } catch (err) {
-      caja.innerHTML = '<div class="qr__alterno">' + escapar(codigo(c)) + '</div>';
-    }
-  }
-
-  // ---------- Panel de la barbería ----------
-  var seleccionadoId = null;
-  var ultimaAccion = null; // { id, antes, texto }
-
-  function renderPanel() {
-    renderNombres();
-    renderResultados();
-    renderSeleccionado();
-    renderVolver();
-    renderNumeros();
-    llenarAjustes();
-  }
-
-  function buscar(q) {
-    var digitos = soloDigitos(q), texto = sinTildes(q).trim();
-    if (!texto) {
-      return estado.clientes.filter(function (c) { return ultimaVisita(c) != null; })
-        .sort(function (a, b) { return ultimaVisita(b) - ultimaVisita(a); }).slice(0, 5);
-    }
-    var cod = /^bd-?\d+$/i.test(q.trim()) ? parseInt(digitos, 10) : null;
-    return estado.clientes.filter(function (c) {
-      if (cod != null) return c.numero === cod;
-      if (digitos.length >= 2 && soloDigitos(c.telefono).indexOf(digitos) >= 0) return true;
-      return texto.length >= 2 && sinTildes(c.nombre).indexOf(texto) >= 0;
-    }).slice(0, 8);
-  }
-
-  function renderResultados() {
-    var q = $('[data-buscar]').value;
-    var lista = buscar(q);
-    $('[data-rotulo-resultados]').textContent = q.trim() ? (lista.length ? 'Resultados' : 'Sin resultados') : 'Visitas recientes';
-    $('[data-resultados]').innerHTML = lista.length ? lista.map(function (c) {
-      return '<li><button type="button" class="resultado" data-elegir="' + c.id + '" aria-pressed="' + (c.id === seleccionadoId) + '">' +
-        '<span class="resultado__nombre">' + escapar(c.nombre) + '</span>' +
-        '<span class="resultado__tel">' + formatoTel(c.telefono) + ' · ' + codigo(c) + '</span>' +
-        '<span class="resultado__sellos">' + Math.min(c.sellos, estado.config.sellos) + '/' + estado.config.sellos + '</span></button></li>';
-    }).join('') : '<li class="resultados__vacio">No encontramos a nadie con ese dato. Puedes registrarlo abajo, en «Cliente nuevo».</li>';
-  }
-
-  function elegir(id, avisar) {
-    if (!cliente(id)) return;
-    seleccionadoId = id;
-    if (ultimaAccion && ultimaAccion.id !== id) ultimaAccion = null;
-    renderResultados();
-    renderSeleccionado();
-    var c = cliente(id);
-    if (avisar) anunciar('Cliente seleccionado: ' + c.nombre);
-    var caja = $('[data-seleccionado]');
-    if (caja.getBoundingClientRect().top > window.innerHeight - 160) caja.scrollIntoView({ block: 'start', behavior: preferirQuieto() ? 'auto' : 'smooth' });
-  }
-
-  function renderSeleccionado(nuevos) {
-    var caja = $('[data-seleccionado]');
-    var c = seleccionadoId ? cliente(seleccionadoId) : null;
-    if (!c) { caja.hidden = true; return; }
-    caja.hidden = false;
-    var d = diasSinVenir(c);
-    $('[data-sel-nombre]').textContent = c.nombre;
-    $('[data-sel-dato]').textContent = formatoTel(c.telefono) + ' · ' + codigo(c) + ' · ' +
-      (d == null ? 'sin visitas aún' : 'última visita ' + hace(d)) +
-      (c.canjes ? ' · ' + plural(c.canjes, 'canje', 'canjes') : '');
-    $('[data-tarjeta-panel]').innerHTML = htmlTarjeta(c, { nuevos: nuevos || [] });
-    var lleno = completa(c);
-    $('[data-mas-sello]').hidden = lleno;
-    var canje = $('[data-canjear]');
-    canje.hidden = !lleno;
-    canje.textContent = 'Canjear ' + minuscula(estado.config.premio);
-    var dz = $('[data-deshacer-caja]');
-    if (ultimaAccion && ultimaAccion.id === c.id) {
-      dz.hidden = false;
-      $('[data-deshacer-texto]').textContent = ultimaAccion.texto;
-    } else dz.hidden = true;
-  }
-
-  function masSello() {
-    var c = cliente(seleccionadoId);
-    if (!c || completa(c)) return;
-    ultimaAccion = { id: c.id, antes: copia(c), texto: 'Sello ' + (c.sellos + 1) + ' marcado.' };
-    c.sellos += 1;
-    c.visitas.push(Date.now());
-    c.recordado = null;
-    guardar();
-    var total = estado.config.sellos;
-    renderSeleccionado([c.sellos - 1]);
-    renderResultados(); renderVolver(); renderNumeros();
-    var btn = completa(c) ? $('[data-canjear]') : $('[data-mas-sello]');
-    btn.classList.remove('ok'); void btn.offsetWidth; btn.classList.add('ok');
-    if (completa(c)) btn.focus(); // el botón +1 se oculta: el foco pasa a «Canjear»
-    var msg = completa(c)
-      ? 'Sello agregado a ' + c.nombre + '. Tarjeta completa: ' + total + ' de ' + total + '. Ya puede canjear su ' + minuscula(estado.config.premio) + '.'
-      : 'Sello agregado a ' + c.nombre + ': ' + c.sellos + ' de ' + total + '.';
-    anunciar(msg);
-    aviso(completa(c) ? 'Tarjeta completa · ' + c.nombre : 'Sello agregado · ' + c.sellos + ' de ' + total, true);
-  }
-
-  function canjear() {
-    var c = cliente(seleccionadoId);
-    if (!c || !completa(c)) return;
-    ultimaAccion = { id: c.id, antes: copia(c), texto: minuscula(estado.config.premio).replace(/^./, function (x) { return x.toUpperCase(); }) + ' canjeado.' };
-    c.sellos = 0;
-    c.canjes += 1;
-    c.visto = 0;
-    c.visitas.push(Date.now());
-    c.recordado = null;
-    guardar();
-    renderSeleccionado();
-    renderResultados(); renderVolver(); renderNumeros();
-    $('[data-mas-sello]').focus();
-    var t = $('.tarjeta', $('[data-tarjeta-panel]'));
-    if (t) t.classList.add('temblor');
-    anunciar(estado.config.premio + ' canjeado para ' + c.nombre + '. La tarjeta vuelve a cero.');
-    aviso('Canjeado · la tarjeta de ' + primerNombre(c.nombre) + ' parte de nuevo', true);
-  }
-
-  function deshacer() {
-    if (!ultimaAccion) return;
-    var c = cliente(ultimaAccion.id);
-    if (!c) { ultimaAccion = null; return; }
-    var antes = ultimaAccion.antes;
-    Object.keys(antes).forEach(function (k) { c[k] = antes[k]; });
-    ultimaAccion = null;
-    guardar();
-    seleccionadoId = c.id;
-    renderSeleccionado(); renderResultados(); renderVolver(); renderNumeros();
-    $('[data-aviso]').hidden = true;
-    var foco = completa(c) ? $('[data-canjear]') : $('[data-mas-sello]');
-    foco.focus();
-    anunciar('Listo, se deshizo la última acción. ' + c.nombre + ' tiene ' + c.sellos + ' de ' + estado.config.sellos + ' sellos.');
-  }
-
-  function recordadoHoy(c) { return c.recordado != null && diasEntre(c.recordado, Date.now()) === 0; }
-
-  function renderVolver() {
-    var cfg = estado.config;
-    var lista = enRiesgo();
-    $('[data-volver-nota]').textContent = 'Clientes con más de ' + cfg.dias + ' días sin venir. El mensaje se abre en WhatsApp listo para enviar.';
-    $('[data-volver]').innerHTML = lista.length ? lista.map(function (c) {
-      var d = diasSinVenir(c), k = faltan(c);
-      return '<li>' +
-        '<div><p class="volver__nombre">' + escapar(c.nombre) + '</p>' +
-        '<p class="volver__dato">' + formatoTel(c.telefono) + ' · ' + (k === 0 ? 'premio listo' : 'le ' + (k === 1 ? 'falta 1 sello' : 'faltan ' + k + ' sellos')) + '</p></div>' +
-        '<p class="volver__dias">' + d + '<small>días</small></p>' +
-        '<a class="btn btn--whatsapp btn--ancho" data-recordar="' + c.id + '" target="_blank" rel="noopener" href="' +
-          escapar(enlaceWa(c.telefono, textoRecordatorio(c))) + '">' +
-          '<svg class="ico" aria-hidden="true" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Z" opacity=".25"/><path fill="currentColor" d="M16.5 14.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>' +
-          'Recordar por WhatsApp<span class="sr"> a ' + escapar(c.nombre) + '</span></a>' +
-        (recordadoHoy(c) ? '<p class="volver__hecho">Recordatorio abierto hoy.</p>' : '') +
-        '</li>';
-    }).join('') : '<li class="volver__vacio">Nadie lleva más de ' + cfg.dias + ' días sin venir. Buena semana.</li>';
-  }
-
-  function renderNumeros() {
-    var cfg = estado.config;
-    var activos = 0, riesgo = 0, canjes = 0, mes = 0;
-    var ahora = new Date(), m = ahora.getMonth(), a = ahora.getFullYear();
-    estado.clientes.forEach(function (c) {
-      var d = diasSinVenir(c);
-      if (d != null && d <= cfg.dias) activos++;
-      if (d != null && d > cfg.dias) riesgo++;
-      canjes += c.canjes || 0;
-      c.visitas.forEach(function (v) { var f = new Date(v); if (f.getMonth() === m && f.getFullYear() === a) mes++; });
-    });
-    $('[data-n-activos]').textContent = activos;
-    $('[data-n-riesgo]').textContent = riesgo;
-    $('[data-n-canjes]').textContent = canjes;
-    $('[data-n-mes]').textContent = mes;
-    $('[data-numeros-nota]').textContent = 'Activo: vino en los últimos ' + cfg.dias + ' días. En riesgo: lleva más de ' + cfg.dias +
-      '. Visitas de ' + MESES[m] + ' de ' + a + '.';
-  }
-
-  // ---------- Registrar cliente ----------
-  function errorCampo(form, nombre, msg) {
-    var input = form.elements[nombre];
-    var p = $('[data-error="' + nombre + '"]', form);
-    if (p) p.textContent = msg || '';
-    if (input) { if (msg) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
-    return !msg;
-  }
-  function registrar(ev) {
-    ev.preventDefault();
-    var form = ev.currentTarget;
-    var nombre = form.elements.nombre.value.trim().replace(/\s+/g, ' ');
-    var ocho = soloDigitos(form.elements.telefono.value);
-    var ok = true;
-    if (nombre.length < 2) ok = errorCampo(form, 'nombre', 'Escribe el nombre del cliente.') && ok;
-    else errorCampo(form, 'nombre', '');
-    var tel = telCompleto(ocho);
-    if (ocho.length !== 8) ok = errorCampo(form, 'telefono', 'El teléfono debe tener 8 dígitos después del +56 9.') && ok;
-    else if (estado.clientes.some(function (c) { return soloDigitos(c.telefono) === soloDigitos(tel); })) ok = errorCampo(form, 'telefono', 'Ese teléfono ya está registrado. Búscalo arriba.') && ok;
-    else errorCampo(form, 'telefono', '');
-    if (!ok) { var inv = form.querySelector('[aria-invalid="true"]'); if (inv) inv.focus(); return; }
-    var n = estado.siguiente++;
-    var c = { id: 'c' + n + '-' + Date.now().toString(36), numero: n, nombre: nombre, telefono: tel, sellos: 0, canjes: 0, visitas: [], visto: 0, recordado: null, creado: Date.now() };
-    estado.clientes.push(c);
-    guardar();
-    form.reset();
+    reemplazar(c);
+    // Primera visita marcada en el mismo paso: el cliente nuevo viene a cortarse.
+    const r = await intentar(() => datos.marcarVisita(c.id));
+    if (r) { reemplazar(r.cliente); ultimaAccion = { id: c.id, accion: r.accion, texto: 'Primera visita marcada.' }; bloqueo = { id: c.id, hasta: Date.now() + 1500 }; }
+    form.reset(); form.hidden = true;
+    $('[data-abrir-nuevo]').setAttribute('aria-expanded', 'false');
     $('[data-buscar]').value = '';
     elegir(c.id);
     renderNumeros(); renderVolver();
-    var caja = $('[data-seleccionado]');
-    caja.scrollIntoView({ block: 'start', behavior: preferirQuieto() ? 'auto' : 'smooth' });
-    $('[data-mas-sello]').focus({ preventScroll: true });
-    anunciar('Cliente registrado: ' + nombre + ', código ' + codigo(c) + '. Ya puedes marcarle el primer sello.');
-    aviso('Cliente registrado · ' + codigo(c), false);
+    $('[data-seleccionado]').scrollIntoView({ block: 'start', behavior: suave() });
+    $('[data-enviar-tarjeta]').focus({ preventScroll: true });
+    anunciar('Listo: ' + nombre + ' quedó registrado con su primera visita. Ahora mándale su tarjeta por WhatsApp.');
+    aviso('Registrado · ' + codigo(cliente(c.id)) + ' · mándale su tarjeta', !!r);
+  } finally {
+    registrando = false;
   }
+}
 
-  // ---------- Ajustes ----------
-  function llenarAjustes() {
-    var f = $('[data-form-ajustes]'), cfg = estado.config;
-    f.elements.nombre.value = cfg.nombre;
-    f.elements.color.value = cfg.color;
-    f.elements.whatsapp.value = cfg.whatsapp;
-    f.elements.sellos.value = cfg.sellos;
-    f.elements.dias.value = cfg.dias;
-    f.elements.premio.value = cfg.premio;
-    marcarMuestra(cfg.color);
+let temporizadorBorrar = null;
+async function borrarCliente(ev) {
+  const b = ev.currentTarget, c = cliente(seleccionadoId);
+  if (!c) return;
+  if (!b.classList.contains('confirmar')) {
+    b.classList.add('confirmar');
+    b.textContent = 'Toca otra vez para borrar a ' + primerNombre(c.nombre);
+    anunciar('Toca otra vez para borrar los datos de ' + c.nombre + '. No se puede deshacer.');
+    window.clearTimeout(temporizadorBorrar);
+    temporizadorBorrar = window.setTimeout(() => { b.classList.remove('confirmar'); b.textContent = 'Borrar sus datos'; }, 5000);
+    return;
   }
-  function marcarMuestra(color) {
-    $$('.muestra').forEach(function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-color').toLowerCase() === String(color).toLowerCase())); });
-  }
-  function guardarAjustes(ev) {
-    ev.preventDefault();
-    var f = ev.currentTarget, ok = true;
-    var nombre = f.elements.nombre.value.trim().replace(/\s+/g, ' ');
-    var wa = soloDigitos(f.elements.whatsapp.value);
-    var sellos = parseInt(f.elements.sellos.value, 10);
-    var dias = parseInt(f.elements.dias.value, 10);
-    var premio = f.elements.premio.value.trim().replace(/\s+/g, ' ');
-    var color = /^#[0-9a-f]{6}$/i.test(f.elements.color.value) ? f.elements.color.value : CONFIG_BASE.color;
-    ok = errorCampo(f, 'nombre', nombre.length < 2 ? 'Escribe el nombre de la barbería.' : '') && ok;
-    ok = errorCampo(f, 'whatsapp', wa.length !== 8 ? 'Deben ser 8 dígitos después del +56 9.' : '') && ok;
-    ok = errorCampo(f, 'sellos', !(sellos >= 4 && sellos <= 15) ? 'Entre 4 y 15 sellos.' : '') && ok;
-    ok = errorCampo(f, 'dias', !(dias >= 5 && dias <= 90) ? 'Entre 5 y 90 días.' : '') && ok;
-    ok = errorCampo(f, 'premio', premio.length < 3 ? 'Escribe el premio, por ejemplo «Corte gratis».' : '') && ok;
-    if (!ok) { var inv = f.querySelector('[aria-invalid="true"]'); if (inv) inv.focus(); return; }
-    estado.config = { nombre: nombre, color: color.toLowerCase(), whatsapp: wa, sellos: sellos, dias: dias, premio: premio };
-    estado.clientes.forEach(function (c) { if (c.visto > c.sellos) c.visto = c.sellos; });
-    guardar();
-    aplicarTema();
-    renderNombres();
-    document.title = 'Panel · ' + estado.config.nombre;
-    renderPanel();
-    anunciar('Ajustes guardados.');
-    aviso('Ajustes guardados', false);
-  }
+  window.clearTimeout(temporizadorBorrar);
+  const ok = await intentar(async () => { await datos.borrarCliente(c.id); return true; });
+  if (!ok) return;
+  clientes = clientes.filter((x) => x.id !== c.id);
+  seleccionadoId = null; ultimaAccion = null;
+  renderSeleccionado(); renderResultados(); renderVolver(); renderNumeros();
+  $('[data-buscar]').focus();
+  anunciar('Datos de ' + c.nombre + ' borrados.');
+  aviso('Datos de ' + primerNombre(c.nombre) + ' borrados', false);
+}
 
-  var temporizadorReset = null;
-  function restablecer(ev) {
-    var b = ev.currentTarget;
-    if (!b.classList.contains('confirmar')) {
-      b.classList.add('confirmar');
-      b.textContent = 'Toca otra vez para confirmar';
-      anunciar('Toca otra vez para confirmar. Se borran los cambios y vuelven los datos de ejemplo.');
-      window.clearTimeout(temporizadorReset);
-      temporizadorReset = window.setTimeout(function () { b.classList.remove('confirmar'); b.textContent = 'Restablecer datos de ejemplo'; }, 5000);
-      return;
-    }
+// ---------- Ajustes ----------
+function llenarAjustes() {
+  const f = $('[data-form-ajustes]');
+  f.elements.nombre.value = cfg.nombre;
+  f.elements.color.value = cfg.color;
+  f.elements.whatsapp.value = cfg.whatsapp;
+  f.elements.sellos.value = cfg.sellos;
+  f.elements.dias.value = cfg.dias;
+  f.elements.premio.value = cfg.premio;
+  marcarMuestra(cfg.color);
+}
+function marcarMuestra(color) {
+  $$('.muestra').forEach((b) => { b.setAttribute('aria-pressed', String(b.getAttribute('data-color').toLowerCase() === String(color).toLowerCase())); });
+}
+async function guardarAjustes(ev) {
+  ev.preventDefault();
+  const f = ev.currentTarget;
+  let ok = true;
+  const nombre = f.elements.nombre.value.trim().replace(/\s+/g, ' ');
+  const wa = soloDigitos(f.elements.whatsapp.value);
+  const sellos = parseInt(f.elements.sellos.value, 10);
+  const dias = parseInt(f.elements.dias.value, 10);
+  const premio = f.elements.premio.value.trim().replace(/\s+/g, ' ');
+  const color = /^#[0-9a-f]{6}$/i.test(f.elements.color.value) ? f.elements.color.value : '#c08f55';
+  ok = errorCampo(f, 'nombre', nombre.length < 2 ? 'Escribe el nombre de la barbería.' : '') && ok;
+  ok = errorCampo(f, 'whatsapp', wa.length !== 8 ? 'Deben ser 8 dígitos después del +56 9.' : '') && ok;
+  ok = errorCampo(f, 'sellos', !(sellos >= 4 && sellos <= 15) ? 'Entre 4 y 15 sellos.' : '') && ok;
+  ok = errorCampo(f, 'dias', !(dias >= 5 && dias <= 90) ? 'Entre 5 y 90 días.' : '') && ok;
+  ok = errorCampo(f, 'premio', premio.length < 3 ? 'Escribe el premio, por ejemplo «Corte gratis».' : '') && ok;
+  if (!ok) { const inv = f.querySelector('[aria-invalid="true"]'); if (inv) inv.focus(); return; }
+  const nuevo = await intentar(() => datos.guardarAjustes({ nombre, color: color.toLowerCase(), whatsapp: wa, sellos, dias, premio }));
+  if (!nuevo) return;
+  cfg = nuevo;
+  aplicarTema(); renderNombres(); ponerTitulo(); renderPanel();
+  anunciar('Ajustes guardados.');
+  aviso('Ajustes guardados', false);
+}
+
+let temporizadorReset = null;
+async function restablecer(ev) {
+  const b = ev.currentTarget;
+  if (!b.classList.contains('confirmar')) {
+    b.classList.add('confirmar');
+    b.textContent = 'Toca otra vez para confirmar';
+    anunciar('Toca otra vez para confirmar. Se borran los cambios y vuelven los datos de ejemplo.');
     window.clearTimeout(temporizadorReset);
-    b.classList.remove('confirmar');
-    b.textContent = 'Restablecer datos de ejemplo';
-    estado = datosEjemplo();
-    seleccionadoId = null;
-    ultimaAccion = null;
-    guardar();
-    aplicarTema();
-    renderNombres();
-    $('[data-buscar]').value = '';
-    renderPanel();
-    anunciar('Datos de ejemplo restablecidos.');
-    aviso('Datos de ejemplo restablecidos', false);
+    temporizadorReset = window.setTimeout(() => { b.classList.remove('confirmar'); b.textContent = 'Restablecer datos de ejemplo'; }, 5000);
+    return;
   }
+  window.clearTimeout(temporizadorReset);
+  b.classList.remove('confirmar');
+  b.textContent = 'Restablecer datos de ejemplo';
+  await intentar(() => datos.restablecer());
+  guardarLocal(CLAVE_VISTO, {});
+  const p = await datos.panel();
+  cfg = p.config; clientes = p.clientes;
+  seleccionadoId = null; ultimaAccion = null;
+  $('[data-buscar]').value = '';
+  aplicarTema(); renderNombres(); renderPanel();
+  anunciar('Datos de ejemplo restablecidos.');
+  aviso('Datos de ejemplo restablecidos', false);
+}
 
-  // ---------- Lector de QR (opcional, cámara) ----------
-  var lector = null;
-  function cargarScript(url) {
-    return new Promise(function (ok, mal) {
-      var s = document.createElement('script');
-      s.src = url; s.async = true;
-      s.onload = ok; s.onerror = mal;
-      document.head.appendChild(s);
-    });
-  }
-  function idDesdeQR(texto) {
-    var m = /#cliente\/([\w-]+)/.exec(texto || '');
-    if (m && cliente(m[1])) return m[1];
-    var cod = /BD-?(\d+)/i.exec(texto || '');
-    if (cod) {
-      var n = parseInt(cod[1], 10);
-      var c = estado.clientes.filter(function (x) { return x.numero === n; })[0];
-      if (c) return c.id;
-    }
-    return null;
-  }
-  function abrirLector() {
-    var caja = $('[data-lector-caja]'), nota = $('[data-lector-nota]');
-    caja.hidden = false;
-    nota.textContent = 'Abriendo la cámara…';
-    var listo = window.Html5Qrcode ? Promise.resolve() : cargarScript(HTML5QR_URL);
-    listo.then(function () {
-      if (!window.Html5Qrcode) throw new Error('sin lector');
-      lector = new window.Html5Qrcode('lector-qr');
-      return lector.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 220, height: 220 } }, function (texto) {
-        var id = idDesdeQR(texto);
-        if (id) {
-          cerrarLector();
-          $('[data-buscar]').value = '';
-          elegir(id);
-          aviso('Cliente encontrado · ' + cliente(id).nombre, false);
-          anunciar('Código leído. Cliente seleccionado: ' + cliente(id).nombre);
-          $('[data-mas-sello]').focus();
-        } else {
-          nota.textContent = 'Ese código no es de una tarjeta de esta barbería.';
-        }
-      }, function () { /* cuadro sin código: se ignora */ });
-    }).then(function () {
-      nota.textContent = 'Apunta la cámara al código del cliente.';
-    }).catch(function () {
-      nota.textContent = 'No pudimos abrir la cámara. Busca al cliente por su teléfono en el campo de arriba.';
-      lector = null;
-    });
-  }
-  function cerrarLector() {
-    var caja = $('[data-lector-caja]');
-    if (lector) {
-      var l = lector; lector = null;
-      try { l.stop().then(function () { try { l.clear(); } catch (e) {} }).catch(function () {}); } catch (e) {}
-    }
-    if (caja) caja.hidden = true;
-  }
-
-  // ---------- Instalar como app (PWA) ----------
-  var pedidoInstalar = null;
-  function prepararInstalacion() {
-    var boton = $('[data-instalar]'), estadoTxt = $('[data-instalar-estado]');
-    var instalada = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone;
-    if (instalada) estadoTxt.textContent = 'Ya la tienes en tu pantalla de inicio. Ábrela desde ahí cuando vayas a la barbería.';
-    window.addEventListener('beforeinstallprompt', function (e) {
-      e.preventDefault();
-      pedidoInstalar = e;
-      boton.hidden = false;
-    });
-    boton.addEventListener('click', function () {
-      if (!pedidoInstalar) return;
-      pedidoInstalar.prompt();
-      pedidoInstalar.userChoice.then(function () { pedidoInstalar = null; boton.hidden = true; }).catch(function () {});
-    });
-    window.addEventListener('appinstalled', function () {
-      boton.hidden = true;
-      estadoTxt.textContent = 'Listo, quedó en tu pantalla de inicio.';
-    });
-    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
-    }
-  }
-
-  function preferirQuieto() { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
-
-  // ---------- Eventos ----------
-  function enlazar() {
-    window.addEventListener('hashchange', function () { var r = leerRuta(); if (r) irA(r, true); });
-
-    $('[data-saltar]').addEventListener('click', function (e) {
-      e.preventDefault();
-      $('#contenido').focus();
-    });
-
-    $('[data-ir-volver]').addEventListener('click', function () {
-      window.setTimeout(function () {
-        var b = $('#bloque-volver');
-        b.scrollIntoView({ block: 'start' });
-        b.focus({ preventScroll: true });
-      }, 0);
-    });
-
-    $('[data-selector-cliente]').addEventListener('change', function (e) {
-      estado.actual = e.target.value;
-      guardar();
-      renderCliente();
-    });
-
-    $('[data-simular-sello]').addEventListener('click', function () {
-      var c = cliente(estado.actual);
-      if (!c) return;
-      var total = estado.config.sellos;
-      if (completa(c)) {
-        c.sellos = 0; c.canjes += 1; c.visto = 0; c.visitas.push(Date.now());
-        guardar(); renderCliente();
-        anunciar('La barbería canjeó tu ' + minuscula(estado.config.premio) + '. Tu tarjeta parte de nuevo.');
-        aviso('Premio canjeado · tarjeta nueva', false);
-        return;
+// ---------- Lector de QR (cámara, opcional) ----------
+let lector = null;
+function cargarScript(url) {
+  return new Promise((ok, mal) => {
+    const s = document.createElement('script');
+    s.src = url; s.async = true; s.onload = ok; s.onerror = mal;
+    document.head.appendChild(s);
+  });
+}
+function idDesdeQR(texto) {
+  texto = texto || '';
+  const t = /#tarjeta\/([A-Za-z0-9_-]{8,64})/.exec(texto);
+  if (t) { const c = clientes.find((x) => x.token === t[1]); if (c) return c.id; }
+  const m = /#cliente\/([\w-]+)/.exec(texto);
+  if (m && cliente(m[1])) return m[1];
+  const cod = /\b[A-Z]{1,3}-?(\d{1,6})\b/i.exec(texto);
+  if (cod) { const n = parseInt(cod[1], 10); const c = clientes.find((x) => x.numero === n); if (c) return c.id; }
+  return null;
+}
+function abrirLector() {
+  const caja = $('[data-lector-caja]'), nota = $('[data-lector-nota]');
+  caja.hidden = false;
+  nota.textContent = 'Abriendo la cámara…';
+  const listo = window.Html5Qrcode ? Promise.resolve() : cargarScript(HTML5QR_URL);
+  listo.then(() => {
+    if (!window.Html5Qrcode) throw new Error('sin lector');
+    lector = new window.Html5Qrcode('lector-qr');
+    return lector.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 220, height: 220 } }, (texto) => {
+      const id = idDesdeQR(texto);
+      if (id) {
+        cerrarLector();
+        $('[data-buscar]').value = '';
+        elegir(id);
+        aviso('Cliente encontrado · ' + cliente(id).nombre, false);
+        anunciar('Código leído. ' + cliente(id).nombre + '. Toca Marcar visita.');
+        enfocarAccion();
+      } else {
+        nota.textContent = 'Ese código no es de una tarjeta de esta barbería.';
       }
-      c.sellos += 1; c.visitas.push(Date.now()); c.recordado = null;
-      guardar();
-      renderCliente(); // anima el sello nuevo porque visto < sellos
-      anunciar(completa(c)
-        ? 'Sello agregado. Completaste tu tarjeta: ' + total + ' de ' + total + '.'
-        : 'Sello agregado: ' + c.sellos + ' de ' + total + '.');
-      aviso(completa(c) ? '¡Tarjeta completa!' : 'Sello agregado · ' + c.sellos + ' de ' + total, false);
-    });
+    }, () => { /* cuadro sin código: se ignora */ });
+  }).then(() => {
+    nota.textContent = 'Apunta la cámara al código del cliente.';
+  }).catch(() => {
+    nota.textContent = 'No se pudo abrir la cámara. Escribe los 4 últimos dígitos de su celular.';
+    lector = null;
+  });
+}
+function cerrarLector() {
+  const caja = $('[data-lector-caja]');
+  if (lector) {
+    const l = lector; lector = null;
+    try { l.stop().then(() => { try { l.clear(); } catch (e) { /* nada */ } }).catch(() => {}); } catch (e) { /* nada */ }
+  }
+  if (caja) caja.hidden = true;
+}
 
-    $$('[data-saltar-a]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        var destino = document.getElementById(b.getAttribute('data-saltar-a'));
-        destino.scrollIntoView({ block: 'start', behavior: preferirQuieto() ? 'auto' : 'smooth' });
-        destino.focus({ preventScroll: true });
-      });
-    });
+// ---------- Instalar como app (opcional) ----------
+let pedidoInstalar = null;
+function prepararInstalacion() {
+  const boton = $('[data-instalar]'), estadoTxt = $('[data-instalar-estado]');
+  const instalada = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone;
+  if (instalada) estadoTxt.textContent = 'Ya la tienes en tu pantalla de inicio.';
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); pedidoInstalar = e; boton.hidden = false; });
+  boton.addEventListener('click', () => {
+    if (!pedidoInstalar) return;
+    pedidoInstalar.prompt();
+    pedidoInstalar.userChoice.then(() => { pedidoInstalar = null; boton.hidden = true; }).catch(() => {});
+  });
+  window.addEventListener('appinstalled', () => { boton.hidden = true; estadoTxt.textContent = 'Listo, quedó en tu pantalla de inicio.'; });
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+}
 
-    var entrada = $('[data-buscar]');
-    entrada.addEventListener('input', renderResultados);
-    entrada.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        var r = buscar(entrada.value);
-        if (r.length === 1) elegir(r[0].id, true);
-      }
-    });
-    $('[data-resultados]').addEventListener('click', function (e) {
-      var b = e.target.closest('[data-elegir]');
-      if (b) elegir(b.getAttribute('data-elegir'), true);
-    });
-    $('[data-sel-cerrar]').addEventListener('click', function () {
-      seleccionadoId = null; ultimaAccion = null;
-      renderSeleccionado(); renderResultados();
-      entrada.focus();
-    });
+// ---------- Eventos ----------
+function enlazar() {
+  window.addEventListener('hashchange', () => { irA(leerRuta(), true); });
 
-    $('[data-mas-sello]').addEventListener('click', masSello);
-    $('[data-canjear]').addEventListener('click', canjear);
-    $('[data-deshacer]').addEventListener('click', deshacer);
-    $('[data-aviso-accion]').addEventListener('click', deshacer);
+  $('[data-saltar]').addEventListener('click', (e) => { e.preventDefault(); $('#contenido').focus(); });
+  $('[data-ir-volver]').addEventListener('click', () => {
+    window.setTimeout(() => { const b = $('#bloque-volver'); b.scrollIntoView({ block: 'start' }); b.focus({ preventScroll: true }); }, 60);
+  });
 
-    $('[data-escanear]').addEventListener('click', abrirLector);
-    $('[data-cerrar-lector]').addEventListener('click', function () { cerrarLector(); $('[data-escanear]').focus(); });
+  // ----- Cliente -----
+  $('[data-selector-cliente]').addEventListener('change', (e) => { guardarLocal(CLAVE_ACTUAL, e.target.value); abrirClienteDemo(); });
+  $('[data-simular-sello]').addEventListener('click', async () => {
+    if (!tarjetaAbierta) return;
+    const c = cliente(tarjetaAbierta.cliente.id) || tarjetaAbierta.cliente;
+    const lleno = completa(c);
+    const r = await intentar(() => (lleno ? datos.canjear(c.id) : datos.marcarVisita(c.id)));
+    if (!r) return;
+    reemplazar(r.cliente);
+    tarjetaAbierta.cliente = r.cliente;
+    pintarCliente(r.cliente);
+    const n = r.cliente, total = cfg.sellos;
+    if (lleno) { anunciar('La barbería canjeó tu ' + minuscula(cfg.premio) + '. Tu tarjeta parte de nuevo.'); aviso('Premio canjeado · tarjeta nueva', false); }
+    else { anunciar(completa(n) ? 'Sello agregado. Completaste tu tarjeta: ' + total + ' de ' + total + '.' : 'Sello agregado: ' + n.sellos + ' de ' + total + '.'); aviso(completa(n) ? '¡Tarjeta completa!' : 'Sello agregado · ' + n.sellos + ' de ' + total, false); }
+  });
+  $('[data-acepta-avisos]').addEventListener('change', async (e) => {
+    if (!tarjetaAbierta) return;
+    const quiere = e.target.checked;
+    const c = await intentar(() => datos.cambiarAvisos(tarjetaAbierta.clave, quiere));
+    if (!c) { e.target.checked = !quiere; return; }
+    tarjetaAbierta.cliente.acepta = c.acepta;
+    if (!real) { const x = cliente(tarjetaAbierta.cliente.id); if (x) x.acepta = c.acepta; }
+    const m = c.acepta ? 'Listo: te avisaremos por WhatsApp cuando te toque corte.' : 'Listo: no te enviaremos recordatorios.';
+    anunciar(m); aviso(m, false);
+  });
 
-    $('[data-volver]').addEventListener('click', function (e) {
-      var a = e.target.closest('[data-recordar]');
-      if (!a) return;
-      var c = cliente(a.getAttribute('data-recordar'));
+  // ----- Panel: buscar y marcar -----
+  const entrada = $('[data-buscar]');
+  entrada.addEventListener('input', () => {
+    const q = entrada.value;
+    if (q.trim() && seleccionadoId) { seleccionadoId = null; renderSeleccionado(); }
+    cerrarNuevo(false);
+    renderResultados();
+    // Con 4 dígitos (o el celular completo) que calzan con UNA persona, se elige sola.
+    const r = buscar(q);
+    const soloNumeros = /^[\d\s+-]+$/.test(q.trim()) && soloDigitos(q).length >= 4;
+    const esCodigo = /^[a-z]{1,3}-?\d{1,6}$/i.test(q.trim());
+    if (r.length === 1 && (soloNumeros || esCodigo)) { elegir(r[0].id, true); enfocarAccion(); }
+  });
+  entrada.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const r = buscar(entrada.value);
+    if (r.length === 1) { elegir(r[0].id, true); enfocarAccion(); }
+    else if (!r.length && entrada.value.trim()) abrirNuevo();
+  });
+  $('[data-modo-busqueda]').addEventListener('click', (e) => {
+    buscarPorNombre = !buscarPorNombre;
+    entrada.setAttribute('inputmode', buscarPorNombre ? 'text' : 'numeric');
+    entrada.placeholder = buscarPorNombre ? 'Ej: Matías' : 'Ej: 0001';
+    $('[data-rotulo-buscar]').textContent = buscarPorNombre ? 'Nombre del cliente' : 'Últimos 4 dígitos del celular';
+    e.currentTarget.textContent = buscarPorNombre ? 'Buscar por celular' : 'Buscar por nombre';
+    entrada.value = ''; renderResultados();
+    entrada.blur(); entrada.focus();
+  });
+  $('[data-resultados]').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-elegir]');
+    if (b) { $('[data-buscar]').value = ''; elegir(b.getAttribute('data-elegir'), true); enfocarAccion(); return; }
+    if (e.target.closest('[data-nuevo-desde-busqueda]')) abrirNuevo();
+  });
+  $('[data-sel-cerrar]').addEventListener('click', () => {
+    seleccionadoId = null; ultimaAccion = null;
+    renderSeleccionado(); renderResultados();
+    entrada.focus();
+  });
+  $('[data-mas-sello]').addEventListener('click', () => marcar(false));
+  $('[data-canjear]').addEventListener('click', () => marcar(true));
+  $('[data-deshacer]').addEventListener('click', deshacer);
+  $('[data-aviso-accion]').addEventListener('click', deshacer);
+  $('[data-borrar-cliente]').addEventListener('click', borrarCliente);
+  $('[data-escanear]').addEventListener('click', abrirLector);
+  $('[data-cerrar-lector]').addEventListener('click', () => { cerrarLector(); $('[data-escanear]').focus(); });
+
+  // ----- Panel: cliente nuevo -----
+  $('[data-abrir-nuevo]').addEventListener('click', () => { if ($('[data-form-nuevo]').hidden) abrirNuevo(); else cerrarNuevo(true); });
+  $('[data-cancelar-nuevo]').addEventListener('click', () => cerrarNuevo(true));
+  const fNuevo = $('[data-form-nuevo]');
+  fNuevo.addEventListener('submit', registrar);
+  fNuevo.elements.telefono.addEventListener('input', (e) => { e.target.value = formatoOcho(soloDigitos(e.target.value).slice(-8)); });
+
+  // ----- Panel: les toca volver -----
+  $('[data-volver]').addEventListener('click', (e) => {
+    const a = e.target.closest('[data-recordar]');
+    if (!a) return;
+    const id = a.getAttribute('data-recordar');
+    // El enlace abre WhatsApp; aquí solo se anota que le escribiste (sin frenar la apertura).
+    intentar(() => datos.anotarRecordatorio(id)).then((c) => {
       if (!c) return;
-      c.recordado = Date.now();
-      guardar();
-      window.setTimeout(function () {
-        renderVolver();
-        var mismo = $('[data-recordar="' + c.id + '"]');
-        if (mismo) mismo.focus();
-      }, 0);
+      reemplazar(c);
+      renderVolver();
+      const mismo = $('[data-recordar="' + id + '"]');
+      if (mismo) mismo.focus();
     });
+  });
 
-    var fNuevo = $('[data-form-nuevo]');
-    fNuevo.addEventListener('submit', registrar);
-    fNuevo.elements.telefono.addEventListener('input', function (e) {
-      var d = soloDigitos(e.target.value).slice(0, 8);
-      e.target.value = d.length > 4 ? d.slice(0, 4) + ' ' + d.slice(4) : d;
+  // ----- Panel: saltos, ajustes, sesión -----
+  $$('[data-saltar-a]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const destino = document.getElementById(b.getAttribute('data-saltar-a'));
+      if (destino.id === 'bloque-ajustes') $('[data-ajustes-detalle]').open = true;
+      destino.scrollIntoView({ block: 'start', behavior: suave() });
+      destino.focus({ preventScroll: true });
     });
+  });
+  const fAj = $('[data-form-ajustes]');
+  fAj.addEventListener('submit', guardarAjustes);
+  fAj.elements.color.addEventListener('input', (e) => marcarMuestra(e.target.value));
+  $$('.muestra').forEach((b) => {
+    b.addEventListener('click', () => { fAj.elements.color.value = b.getAttribute('data-color'); marcarMuestra(b.getAttribute('data-color')); });
+  });
+  $('[data-restablecer]').addEventListener('click', restablecer);
 
-    var fAj = $('[data-form-ajustes]');
-    fAj.addEventListener('submit', guardarAjustes);
-    fAj.elements.color.addEventListener('input', function (e) { marcarMuestra(e.target.value); });
-    $$('.muestra').forEach(function (b) {
-      b.addEventListener('click', function () {
-        fAj.elements.color.value = b.getAttribute('data-color');
-        marcarMuestra(b.getAttribute('data-color'));
-      });
-    });
-    $('[data-restablecer]').addEventListener('click', restablecer);
+  $('[data-login]').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget, err = $('[data-login-error]');
+    err.textContent = '';
+    try { await datos.entrar(f.elements.correo.value, f.elements.clave.value); }
+    catch (x) { err.textContent = x.message; f.elements.clave.focus(); return; }
+    f.reset(); panelCargado = false;
+    await abrirPanel();
+    $('[data-buscar]').focus();
+  });
+  $('[data-salir]').addEventListener('click', async () => {
+    await intentar(() => datos.salir());
+    clientes = []; seleccionadoId = null; ultimaAccion = null; panelCargado = false;
+    mostrarLogin(true);
+  });
+
+  // La tarjeta del cliente se actualiza sola cuando vuelve a la pestaña (y cada 30 s mientras la mira).
+  const refrescarTarjeta = () => {
+    if (document.visibilityState !== 'visible' || !tarjetaAbierta) return;
+    if (vistaActual === 'tarjeta') abrirTarjeta(tarjetaAbierta.clave);
+  };
+  document.addEventListener('visibilitychange', refrescarTarjeta);
+  if (real) window.setInterval(refrescarTarjeta, 30000);
+}
+
+// ---------- Arranque ----------
+async function iniciar() {
+  try { datos = await crearDatos(); }
+  catch (e) {
+    $('#contenido').innerHTML = '<p class="falla" role="alert">' + escapar(e.message) + '</p>';
+    return;
   }
-
-  // ---------- Arranque ----------
-  function iniciar() {
-    estado = cargar();
-    aplicarTema();
-    renderNombres();
-    enlazar();
-    prepararInstalacion();
-    var r = leerRuta();
-    irA(r || { vista: 'inicio' }, false);
-    // Si qrcodejs llega después (red lenta), redibuja el QR
-    if (typeof window.QRCode !== 'function') {
-      window.addEventListener('load', function () { if (vistaActual === 'cliente') renderCliente(); });
-    }
-    // Hook mínimo para pruebas automatizadas
-    window.__fidelidad = { estado: function () { return estado; } };
+  real = datos.modo === 'real';
+  document.body.setAttribute('data-modo', real ? 'real' : 'demo');
+  if (!real) {
+    const p = await datos.panel();
+    cfg = p.config; clientes = p.clientes; puedeAjustar = true; panelCargado = true;
+    datos.alCambiar(recargarPanel);
+  } else {
+    cfg = { nombre: 'Tarjeta de fidelidad', color: '#c08f55', whatsapp: '', sellos: 8, dias: 15, premio: 'Corte gratis' };
   }
+  aplicarTema();
+  renderNombres();
+  enlazar();
+  prepararInstalacion();
+  await irA(leerRuta(), false);
+  // Si qrcodejs llega después (red lenta), se redibuja el QR
+  if (typeof window.QRCode !== 'function') {
+    window.addEventListener('load', () => { if (tarjetaAbierta && (vistaActual === 'cliente' || vistaActual === 'tarjeta')) dibujarQR(tarjetaAbierta.cliente); });
+  }
+  // Acceso mínimo para pruebas automatizadas
+  window.__fidelidad = { clientes: () => clientes, config: () => cfg, modo: () => datos.modo };
+}
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
-  else iniciar();
-})();
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
+else iniciar();

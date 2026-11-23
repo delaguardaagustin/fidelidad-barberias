@@ -19,12 +19,12 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Instrument+Serif:ital@0;1&display=swap">
   <link rel="stylesheet" href="app.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
-  <script src="app.js" defer></script>
+  <script type="module" src="app.js"></script>
 </head>
 <body>
   <a class="saltar" href="#contenido" data-saltar>Saltar al contenido</a>
 
-  <div class="franja-demo" role="note">
+  <div class="franja-demo" role="note" data-solo-demo>
     <span class="franja-demo__punto" aria-hidden="true"></span>
     Demo · datos de ejemplo
   </div>
@@ -34,7 +34,7 @@
       <span class="poste" aria-hidden="true"></span>
       <span data-nombre-barberia>Barbería Demo</span>
     </a>
-    <nav class="barra__nav" aria-label="Vistas de la demo">
+    <nav class="barra__nav" aria-label="Vistas de la demo" data-solo-demo>
       <a href="#inicio" data-nav="inicio">Inicio</a>
       <a href="#cliente" data-nav="cliente">Cliente</a>
       <a href="#barberia" data-nav="barberia">Barbería</a>
@@ -53,8 +53,8 @@
             Que esta vez sea verdad.
           </h1>
           <ol class="tres-lineas">
-            <li><span class="tres-lineas__n" aria-hidden="true">1</span>Tu cliente lleva su tarjeta de sellos en el celular. Nada de cartones que se pierden en la billetera.</li>
-            <li><span class="tres-lineas__n" aria-hidden="true">2</span>En cada corte, la barbería escanea su código y marca la visita con un toque.</li>
+            <li><span class="tres-lineas__n" aria-hidden="true">1</span>Tu cliente recibe su tarjeta de sellos por WhatsApp y la abre en el celular, sin instalar nada. Nada de cartones que se pierden en la billetera.</li>
+            <li><span class="tres-lineas__n" aria-hidden="true">2</span>En cada corte, la barbería escanea su código o escribe los 4 últimos dígitos de su celular, y marca la visita con un toque.</li>
             <li><span class="tres-lineas__n" aria-hidden="true">3</span>Cuando a alguien le toca volver, el panel te avisa y le escribes por WhatsApp con el mensaje ya listo.</li>
           </ol>
           <div class="acciones">
@@ -79,17 +79,33 @@
 
     <!-- ============ CLIENTE ============ -->
     <section class="vista vista-cliente" data-vista="cliente" aria-labelledby="titulo-cliente" hidden>
-      <div class="control-demo">
+      <div class="control-demo" data-solo-demo>
         <label for="selector-cliente">Ver la tarjeta de</label>
         <select id="selector-cliente" data-selector-cliente></select>
+        <button type="button" class="btn btn--suave btn--chico" data-simular-sello>Probar: me marcan un sello</button>
       </div>
 
       <h1 id="titulo-cliente" class="sr">Tu tarjeta de cliente</h1>
 
-      <div class="cliente-grid">
+      <div class="falla" role="alert" data-tarjeta-error hidden>
+        <p><strong>No encontramos esta tarjeta.</strong> Revisa que abriste el enlace completo que te mandó la barbería por WhatsApp, o pídeles que te lo manden de nuevo.</p>
+      </div>
+
+      <div class="cliente-grid" data-cliente-grid>
         <div class="cliente-col">
           <div data-tarjeta-cliente></div>
           <p class="estado-tarjeta" data-estado-tarjeta></p>
+
+          <div class="qr-bloque">
+            <div class="qr-bloque__texto">
+              <h2 class="subtitulo">Tu código</h2>
+              <p>Muéstraselo a tu barbero al pagar. Lo escanea y te marca la visita.</p>
+              <p class="codigo">Código <strong data-codigo-cliente>BD-0001</strong></p>
+            </div>
+            <div class="qr-bloque__qr">
+              <div class="qr" data-qr role="img" aria-label="Código QR de tu tarjeta"></div>
+            </div>
+          </div>
 
           <div class="proximo">
             <p class="proximo__rotulo">Tu próximo corte recomendado</p>
@@ -101,53 +117,74 @@
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.3.8 3.2.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3Z"/></svg>
             Reservar por WhatsApp
           </a>
-
-          <button type="button" class="btn btn--suave btn--ancho" data-simular-sello>
-            Probar: la barbería me marca un sello
-          </button>
         </div>
 
         <div class="cliente-col">
-          <div class="qr-bloque">
-            <div class="qr-bloque__texto">
-              <h2 class="subtitulo">Tu código</h2>
-              <p>Muéstraselo a tu barbero al pagar. Lo escanea y te marca el sello.</p>
-              <p class="codigo">Código <strong data-codigo-cliente>BD-0001</strong></p>
-            </div>
-            <div class="qr-bloque__qr">
-              <div class="qr" data-qr role="img" aria-label="Código QR personal del cliente"></div>
-            </div>
-          </div>
-
-          <div class="instalar">
-            <h2 class="subtitulo">Tenla siempre a mano</h2>
-            <p data-instalar-estado>Agrégala a la pantalla de inicio y se abre como una app, sin descargar nada.</p>
-            <button type="button" class="btn btn--marca btn--ancho" data-instalar hidden>Agregar a la pantalla de inicio</button>
-            <ul class="instalar__pasos">
-              <li><strong>iPhone (Safari):</strong> toca <span class="tecla">Compartir</span> y luego <span class="tecla">Agregar a inicio</span>.</li>
-              <li><strong>Android (Chrome):</strong> toca el menú <span class="tecla">⋮</span> y luego <span class="tecla">Agregar a la pantalla principal</span>.</li>
-            </ul>
-          </div>
-
           <div class="historial">
             <h2 class="subtitulo">Tus últimas visitas</h2>
             <ul class="historial__lista" data-historial></ul>
           </div>
+
+          <div class="avisos">
+            <label class="interruptor">
+              <input type="checkbox" role="switch" data-acepta-avisos>
+              <span class="interruptor__pista" aria-hidden="true"></span>
+              <span class="interruptor__texto">Avísenme por WhatsApp cuando me toque corte</span>
+            </label>
+            <p class="avisos__nota">Puedes cambiarlo cuando quieras.</p>
+          </div>
+
+          <details class="plegable instalar">
+            <summary>Opcional: dejarla como app</summary>
+            <div class="plegable__cuerpo">
+              <p data-instalar-estado>No necesitas instalar nada: el enlace de WhatsApp siempre abre tu tarjeta. Si prefieres tenerla en la pantalla de inicio:</p>
+              <button type="button" class="btn btn--marca btn--ancho" data-instalar hidden>Agregar a la pantalla de inicio</button>
+              <ul class="instalar__pasos">
+                <li><strong>iPhone (Safari):</strong> toca <span class="tecla">Compartir</span> y luego <span class="tecla">Agregar a inicio</span>.</li>
+                <li><strong>Android (Chrome):</strong> toca el menú <span class="tecla">⋮</span> y luego <span class="tecla">Agregar a la pantalla principal</span>.</li>
+              </ul>
+            </div>
+          </details>
+
+          <details class="plegable">
+            <summary>Cómo usamos tus datos</summary>
+            <div class="plegable__cuerpo">
+              <p><span data-nombre-barberia>Barbería Demo</span> guarda tu nombre, tu celular y las fechas de tus visitas solo para llevar tu tarjeta de sellos y, si lo aceptas, recordarte por WhatsApp cuando te toque corte. No se venden ni se comparten con otras empresas.</p>
+              <p>Puedes pedir ver, corregir o borrar tus datos escribiendo al WhatsApp de la barbería. Si no vuelves en dos años, se borran.</p>
+              <p class="nota-demo" data-solo-demo>En esta demo los datos son inventados y quedan solo en este navegador.</p>
+            </div>
+          </details>
         </div>
       </div>
     </section>
 
     <!-- ============ BARBERÍA ============ -->
     <section class="vista vista-barberia" data-vista="barberia" aria-labelledby="titulo-panel" hidden>
+      <!-- Solo en el modo real: entrada del personal -->
+      <form class="bloque login" data-login hidden novalidate aria-labelledby="t-login">
+        <h1 id="t-login" class="titulo-panel">Entrar al panel</h1>
+        <p class="bloque__nota">Para el personal de la barbería. Si eres cliente, abre el enlace de tu tarjeta que te llegó por WhatsApp.</p>
+        <div class="campo">
+          <label for="login-correo" class="rotulo">Correo</label>
+          <input id="login-correo" name="correo" type="email" autocomplete="username" required>
+        </div>
+        <div class="campo">
+          <label for="login-clave" class="rotulo">Clave</label>
+          <input id="login-clave" name="clave" type="password" autocomplete="current-password" required>
+        </div>
+        <p class="campo__error" data-login-error role="alert"></p>
+        <button type="submit" class="btn btn--marca btn--ancho btn--grande">Entrar</button>
+      </form>
+
+      <div data-panel hidden>
       <div class="panel-cabeza">
         <p class="antetitulo">Panel de la barbería</p>
         <h1 id="titulo-panel" class="titulo-panel" data-nombre-barberia>Barbería Demo</h1>
         <nav class="saltos" aria-label="Ir a una sección del panel">
-          <button type="button" data-saltar-a="bloque-marcar">Marcar visita</button>
-          <button type="button" data-saltar-a="bloque-volver">Les toca volver</button>
+          <button type="button" data-saltar-a="bloque-volver">Les toca volver<span data-n-volver-chip></span></button>
           <button type="button" data-saltar-a="bloque-numeros">Números</button>
-          <button type="button" data-saltar-a="bloque-nuevo">Cliente nuevo</button>
           <button type="button" data-saltar-a="bloque-ajustes">Ajustes</button>
+          <button type="button" data-salir hidden>Salir</button>
         </nav>
       </div>
 
@@ -157,22 +194,53 @@
         <section class="bloque bloque--marcar" id="bloque-marcar" aria-labelledby="t-marcar" tabindex="-1">
           <h2 id="t-marcar" class="bloque__titulo">Marcar visita</h2>
           <div class="buscar">
-            <label for="buscar-cliente" class="rotulo">Buscar por teléfono o nombre</label>
+            <label for="buscar-cliente" class="rotulo" data-rotulo-buscar>Últimos 4 dígitos del celular</label>
             <div class="buscar__fila">
-              <input id="buscar-cliente" type="search" inputmode="search" autocomplete="off" placeholder="Ej: 0007 o Matías" data-buscar>
+              <input id="buscar-cliente" type="search" inputmode="numeric" autocomplete="off" placeholder="Ej: 0001" data-buscar>
               <button type="button" class="btn btn--linea" data-escanear>
                 <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 12h8"/></svg>
                 Escanear QR
               </button>
+            </div>
+            <div class="buscar__extra">
+              <button type="button" class="enlace-boton" data-modo-busqueda>Buscar por nombre</button>
+              <button type="button" class="enlace-boton" data-abrir-nuevo aria-expanded="false" aria-controls="form-nuevo">+ Cliente nuevo</button>
             </div>
             <div class="lector" data-lector-caja hidden>
               <div id="lector-qr" class="lector__video"></div>
               <p class="lector__nota" data-lector-nota>Apunta la cámara al código del cliente.</p>
               <button type="button" class="btn btn--suave" data-cerrar-lector>Cerrar cámara</button>
             </div>
-            <p class="rotulo-lista" data-rotulo-resultados>Visitas recientes</p>
+            <p class="rotulo-lista" data-rotulo-resultados>Atendidos hace poco</p>
             <ul class="resultados" data-resultados></ul>
           </div>
+
+          <!-- Cliente nuevo: aparece aquí mismo cuando no está en la búsqueda -->
+          <form class="formulario nuevo" id="form-nuevo" data-form-nuevo hidden novalidate aria-labelledby="t-nuevo">
+            <p id="t-nuevo" class="nuevo__titulo">Cliente nuevo</p>
+            <div class="campo">
+              <label for="nuevo-nombre" class="rotulo">Nombre</label>
+              <input id="nuevo-nombre" name="nombre" type="text" autocomplete="off" autocapitalize="words" maxlength="40" required aria-describedby="err-nuevo-nombre">
+              <p class="campo__error" id="err-nuevo-nombre" data-error="nombre"></p>
+            </div>
+            <div class="campo">
+              <label for="nuevo-telefono" class="rotulo">Celular</label>
+              <div class="prefijo">
+                <span class="prefijo__fijo" aria-hidden="true">+56 9</span>
+                <input id="nuevo-telefono" name="telefono" type="tel" inputmode="numeric" autocomplete="off" maxlength="9" placeholder="0000 0013" required aria-describedby="err-nuevo-telefono">
+              </div>
+              <p class="campo__error" id="err-nuevo-telefono" data-error="telefono"></p>
+            </div>
+            <label class="casilla">
+              <input type="checkbox" name="acepta">
+              <span>Acepta que le escribamos por WhatsApp para recordarle su corte</span>
+            </label>
+            <p class="campo__ayuda">Cuéntale que guardas su nombre y celular solo para su tarjeta de sellos.</p>
+            <div class="nuevo__acciones">
+              <button type="submit" class="btn btn--marca btn--grande">Registrar y marcar visita</button>
+              <button type="button" class="btn btn--suave" data-cancelar-nuevo>Cancelar</button>
+            </div>
+          </form>
 
           <div class="seleccionado" data-seleccionado hidden>
             <div class="seleccionado__cabeza">
@@ -180,47 +248,30 @@
                 <p class="seleccionado__nombre" data-sel-nombre></p>
                 <p class="seleccionado__dato" data-sel-dato></p>
               </div>
-              <button type="button" class="btn btn--suave btn--chico" data-sel-cerrar aria-label="Quitar cliente seleccionado">Cambiar</button>
+              <button type="button" class="btn btn--suave btn--chico" data-sel-cerrar aria-label="Elegir otro cliente">Otro</button>
             </div>
-            <div data-tarjeta-panel></div>
-            <button type="button" class="btn btn--marca btn--sello" data-mas-sello>+1 sello</button>
+            <p class="seleccionado__aviso" data-sel-aviso hidden></p>
+            <button type="button" class="btn btn--marca btn--sello" data-mas-sello>Marcar visita</button>
             <button type="button" class="btn btn--canje btn--sello" data-canjear hidden>Canjear corte gratis</button>
             <div class="deshacer" data-deshacer-caja hidden>
               <span data-deshacer-texto></span>
               <button type="button" class="btn btn--suave btn--chico" data-deshacer>Deshacer</button>
             </div>
+            <div data-tarjeta-panel></div>
+            <a class="btn btn--linea btn--ancho" data-enviar-tarjeta href="#" target="_blank" rel="noopener">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2Z"/></svg>
+              <span>Mandarle su tarjeta a <span data-enviar-nombre></span></span>
+            </a>
+            <button type="button" class="btn btn--peligro btn--chico borrar-cliente" data-borrar-cliente>Borrar sus datos</button>
           </div>
         </section>
-
-        <!-- Cliente nuevo -->
-        <section class="bloque bloque--nuevo" id="bloque-nuevo" aria-labelledby="t-nuevo" tabindex="-1">
-          <h2 id="t-nuevo" class="bloque__titulo">Registrar cliente nuevo</h2>
-          <form class="formulario" data-form-nuevo novalidate>
-            <div class="campo">
-              <label for="nuevo-nombre" class="rotulo">Nombre</label>
-              <input id="nuevo-nombre" name="nombre" type="text" autocomplete="off" maxlength="40" required aria-describedby="err-nuevo-nombre">
-              <p class="campo__error" id="err-nuevo-nombre" data-error="nombre"></p>
-            </div>
-            <div class="campo">
-              <label for="nuevo-telefono" class="rotulo">Teléfono</label>
-              <div class="prefijo">
-                <span class="prefijo__fijo" aria-hidden="true">+56 9</span>
-                <input id="nuevo-telefono" name="telefono" type="tel" inputmode="numeric" autocomplete="off" maxlength="9" placeholder="0000 0013" required aria-describedby="ayuda-nuevo-telefono err-nuevo-telefono">
-              </div>
-              <p class="campo__ayuda" id="ayuda-nuevo-telefono">Los 8 dígitos después del +56 9.</p>
-              <p class="campo__error" id="err-nuevo-telefono" data-error="telefono"></p>
-            </div>
-            <button type="submit" class="btn btn--marca btn--ancho">Registrar cliente</button>
-          </form>
-        </section>
-
         </div>
 
         <div class="panel-col panel-col--der">
         <!-- Les toca volver -->
         <section class="bloque bloque--volver" id="bloque-volver" aria-labelledby="t-volver" tabindex="-1">
-          <h2 id="t-volver" class="bloque__titulo">Les toca volver</h2>
-          <p class="bloque__nota" data-volver-nota>Clientes con más de 15 días sin venir.</p>
+          <h2 id="t-volver" class="bloque__titulo">Les toca volver <span class="contador" data-n-volver></span></h2>
+          <p class="bloque__nota" data-volver-nota></p>
           <ul class="volver" data-volver></ul>
         </section>
 
@@ -230,17 +281,17 @@
           <dl class="numeros">
             <div class="numeros__item"><dt>Clientes activos</dt><dd data-n-activos>0</dd></div>
             <div class="numeros__item numeros__item--riesgo"><dt>En riesgo</dt><dd data-n-riesgo>0</dd></div>
-            <div class="numeros__item"><dt>Cortes gratis canjeados</dt><dd data-n-canjes>0</dd></div>
+            <div class="numeros__item"><dt>Premios canjeados</dt><dd data-n-canjes>0</dd></div>
             <div class="numeros__item"><dt>Visitas del mes</dt><dd data-n-mes>0</dd></div>
           </dl>
           <p class="bloque__nota" data-numeros-nota></p>
         </section>
-
         </div>
 
-        <!-- Ajustes -->
-        <section class="bloque bloque--ajustes" id="bloque-ajustes" aria-labelledby="t-ajustes" tabindex="-1">
-          <h2 id="t-ajustes" class="bloque__titulo">Ajustes</h2>
+        <!-- Ajustes: plegados, se usan pocas veces -->
+        <section class="bloque bloque--ajustes" id="bloque-ajustes" aria-label="Ajustes" tabindex="-1" data-bloque-ajustes>
+          <details data-ajustes-detalle>
+          <summary class="bloque__titulo ajustes__resumen">Ajustes</summary>
           <form class="formulario formulario--ajustes" data-form-ajustes novalidate>
             <div class="campo">
               <label for="aj-nombre" class="rotulo">Nombre de la barbería</label>
@@ -290,7 +341,9 @@
               <button type="button" class="btn btn--peligro" data-restablecer>Restablecer datos de ejemplo</button>
             </div>
           </form>
+          </details>
         </section>
+      </div>
       </div>
     </section>
   </main>

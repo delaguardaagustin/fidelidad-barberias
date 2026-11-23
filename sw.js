@@ -1,7 +1,8 @@
-/* Service worker mínimo: permite instalar la demo y abrirla sin conexión.
-   Primero intenta la red (para ver siempre la última versión) y si falla usa la copia guardada. */
-var CACHE = 'fidelidad-barberias-v1';
-var ARCHIVOS = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './iconos/icono.svg', './iconos/icono-192.png', './iconos/icono-512.png'];
+/* Service worker mínimo: permite instalar la tarjeta y abrirla sin conexión.
+   Primero intenta la red (para ver siempre la última versión) y si falla usa la copia guardada.
+   Solo guarda archivos propios y de cdnjs/Google Fonts: las consultas a Supabase nunca se guardan. */
+var CACHE = 'fidelidad-barberias-v2';
+var ARCHIVOS = ['./', './index.html', './app.css', './app.js', './datos.js', './datos-local.js', './config.js', './manifest.webmanifest', './iconos/icono.svg', './iconos/icono-192.png', './iconos/icono-512.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(ARCHIVOS); }).catch(function () {}));
